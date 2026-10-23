@@ -33,7 +33,7 @@ import os
 import sys
 import time
 
-from javac import CompileError, Compiler, Parser, tokenize
+from mini_javac import CompileError, Compiler, Parser, tokenize
 
 
 # =====================================================================
@@ -41,14 +41,60 @@ from javac import CompileError, Compiler, Parser, tokenize
 # =====================================================================
 
 class Tracer:
-    def __init__(self, step_mode: bool = False, delay: float = 0.0, brief: bool = False):
+    def __init__(self, step_mode: bool = False, delay: float = 0.0, brief: bool = False,
+                 record: bool = False):
         self.n = 0
         self.step_mode = step_mode
         self.delay = delay
         self.brief = brief
+        # recording (used by --json to drive the visualisation)
+        self.events = [] if record else None
+        self.capture = None          # function returning a snapshot of the whole machine
+        self.cur = None
+        self.marks = {}
+        self.stage_no = 0
+
+    # an event's snapshot is taken when the NEXT event starts, so it shows the state AFTER the step
+    def _begin(self, who: str, msg: str, micro: bool = False):
+        if self.events is None:
+            return
+        self._end()
+        self.cur = {"who": who, "msg": msg, "det": [], "stage": self.stage_no}
+        if micro:
+            self.cur["micro"] = True
+
+    def _end(self):
+        if self.cur is None:
+            return
+        self.cur.update(self.marks)
+        self.marks = {}
+        if self.capture:
+            self.cur["s"] = self.capture()
+        self.events.append(self.cur)
+        self.cur = None
+
+    def finish(self):
+        if self.events is not None:
+            self._end()
+
+    def seal(self):
+        """Close the current event now, before the machine state changes for the next one."""
+        if self.events is not None:
+            self._end()
+
+    def mark(self, **kw):
+        """Attach extra facts (ALU operation, system call, ...) to the current event."""
+        if self.events is not None:
+            self.marks.update(kw)
+
+    def micro(self, who: str, msg: str):
+        """A sub-step: printed as a detail line, recorded as its own event."""
+        print(f"      {'':<12}|   {msg}")
+        self._begin(who, msg, micro=True)
 
     def stage(self, number: int, title: str, blurb: str = ""):
         print()
+        self.stage_no = number
         print("=" * 78)
         print(f" STAGE {number}: {title}")
         if blurb:
@@ -58,11 +104,14 @@ class Tracer:
     def step(self, who: str, msg: str):
         self.n += 1
         print(f"[{self.n:03}] {who:<12}| {msg}")
+        self._begin(who, msg)
         self._pause()
 
     def detail(self, msg: str, always: bool = False):
         if always or not self.brief:
             print(f"      {'':<12}|   {msg}")
+        if self.cur is not None:
+            self.cur["det"].append(msg)
 
     def box(self, title: str, lines: list[str]):
         width = max([len(title) + 4] + [len(l) + 4 for l in lines])
@@ -70,6 +119,8 @@ class Tracer:
         for l in lines:
             print(f"      {'':<12}|   | {l:<{width}}|")
         print(f"      {'':<12}|   +" + "-" * (width + 1) + "+")
+        if self.cur is not None:
+            self.cur.setdefault("box", []).append({"t": title, "l": lines})
 
     def _pause(self):
         if self.step_mode:
@@ -100,12 +151,31 @@ class Ref:
         return f"{self.cls}@{self.addr:#x}"
 
 
-class SystemOut:
+class Opaque:
+    """A value we only show by name, e.g. System.out or the args array."""
+    def __init__(self, label: str):
+        self.label = label
+
     def __repr__(self):
-        return "System.out"
+        return self.label
 
 
-SYSTEM_OUT = SystemOut()
+SYSTEM_OUT = Opaque("System.out")
+
+
+def enc(v):
+    """Encode a JVM value for the JSON trace."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        return {"s": v}
+    if isinstance(v, Ref):
+        return {"r": v.addr, "c": v.cls}
+    return {"o": repr(v)}
 
 
 def show(v) -> str:
@@ -129,12 +199,17 @@ class Disk:
 
     def __init__(self, folder: str, t: Tracer):
         self.folder, self.t = folder, t
+        self.files: list[str] = []
         os.makedirs(folder, exist_ok=True)
 
     def write(self, name: str, data: bytes):
+        self.t.seal()
         with open(os.path.join(self.folder, name), "wb") as f:
             f.write(data)
+        if name not in self.files:
+            self.files.append(name)
         self.t.step("Disk", f"wrote {name} ({len(data)} bytes) to storage")
+        self.t.mark(io={"op": "write", "file": name, "bytes": len(data)})
 
     def read(self, name: str) -> bytes:
         path = os.path.join(self.folder, name)
@@ -143,6 +218,7 @@ class Disk:
         with open(path, "rb") as f:
             data = f.read()
         self.t.step("Disk", f"read {name} ({len(data)} bytes) from storage into RAM")
+        self.t.mark(io={"op": "read", "file": name, "bytes": len(data)})
         return data
 
 
@@ -154,8 +230,10 @@ class Console:
         self.text = ""
 
     def write(self, text: str):
+        self.t.seal()
         self.text += text
         self.t.step("Console", f"screen shows: {text.rstrip()}")
+        self.t.mark(io={"op": "write", "text": text})
 
 
 class Devices:
@@ -179,19 +257,25 @@ class CPU:
         self.bytecodes = 0           # bytecodes run through the interpreter loop
         self.native = 0              # machine instructions run directly
 
-    def run_native(self, name: str, code: list[tuple], args: list[int]) -> int:
+    def run_native(self, name: str, code: list[tuple], args: list[int], frame=None) -> int:
+        self.t.seal()
         for reg, value in zip(ARG_REGS, args):
             self.registers[reg] = value
         loaded = ", ".join(f"{r}={v}" for r, v in zip(ARG_REGS, args))
         self.t.step("CPU", f"jumps straight into machine code for {name} ({loaded})")
-        for ins in code:
+        for idx, ins in enumerate(code):
+            self.t.seal()
             self.native += 1
             op = ins[0]
+            if frame is not None:
+                frame.pc = idx
             if op == "ret":
                 result = self.registers["eax"]
-                self.t.detail(f"{'ret':<18}; return value is in eax = {result}", always=True)
+                self.t.micro("CPU", f"{'ret':<18}; return value is in eax = {result}")
                 return result
             dst = ins[1]
+            before = self.registers[dst]
+            src = self._value(ins[2]) if len(ins) > 2 else None
             if op == "mov":
                 self.registers[dst] = self._value(ins[2])
             elif op == "add":
@@ -202,7 +286,10 @@ class CPU:
                 self.registers[dst] = i32(self.registers[dst] * self._value(ins[2]))
             elif op == "neg":
                 self.registers[dst] = i32(-self.registers[dst])
-            self.t.detail(f"{asm_text(ins):<18}; {dst} = {self.registers[dst]}", always=True)
+            self.t.micro("CPU", f"{asm_text(ins):<18}; {dst} = {self.registers[dst]}")
+            if op in ("add", "sub", "imul"):
+                self.t.mark(alu={"op": {"add": "+", "sub": "-", "imul": "*"}[op], "a": before, "b": src,
+                                 "r": self.registers[dst], "via": "native", "ins": asm_text(ins)})
         raise RuntimeError("machine code ended without ret")
 
     def _value(self, src):
@@ -246,6 +333,7 @@ class OS:
             f"{name:<20} starts {start:#011x}  size {size // (1024 * 1024)} MB"
             for name, (start, size) in proc.memory.items()
         ])
+        t.seal()
         proc.state = "running"
         t.step("OS", f"scheduler put PID {proc.pid} on CPU core 0 -> the JVM starts running")
         return proc
@@ -253,14 +341,17 @@ class OS:
     # ---- system calls: the only way a program can use devices ----
     def sys_read(self, proc: Process, filename: str) -> bytes:
         self.t.step("OS", f"system call read(\"{filename}\") from PID {proc.pid} -> asking the Disk")
+        self.t.mark(sys={"call": "read", "arg": filename})
         return self.devices.disk.read(filename)
 
     def sys_write(self, proc: Process, fd: int, text: str):
         self.t.step("OS", f"system call write(fd={fd} stdout, {json.dumps(text)}) from PID {proc.pid}"
                           " -> sending to the Console")
+        self.t.mark(sys={"call": "write", "arg": text})
         self.devices.console.write(text)
 
     def exit(self, proc: Process, code: int):
+        self.t.seal()
         proc.state = "terminated"
         self.t.step("OS", f"PID {proc.pid} exited with status {code}; its memory is freed "
                           "and the CPU is given to other processes")
@@ -277,12 +368,14 @@ class Heap:
         self.next_addr = base
 
     def allocate(self, cls: str, field_names: list[str]) -> Ref:
+        self.t.seal()
         addr = self.next_addr
         self.next_addr += 8 + 4 * len(field_names)        # header + one int per field
         self.objects[addr] = {"class": cls, "fields": {f: 0 for f in field_names}}
         ref = Ref(addr, cls)
         fields = ", ".join(f"{f}=0" for f in field_names)
         self.t.step("Heap", f"allocated a {cls} object at address {addr:#x} ({fields}, defaults)")
+        self.t.mark(heap={"op": "new", "addr": addr})
         return ref
 
     def _obj(self, ref) -> dict:
@@ -296,8 +389,10 @@ class Heap:
         return value
 
     def put_field(self, ref: Ref, name: str, value):
+        self.t.seal()
         self._obj(ref)["fields"][name] = value
         self.t.step("Heap", f"{ref}.{name} = {show(value)}")
+        self.t.mark(heap={"op": "put", "addr": ref.addr, "field": name})
 
     def snapshot(self) -> list[str]:
         if not self.objects:
@@ -317,6 +412,7 @@ class Frame:
         self.locals = list(args) + [None] * (max_locals - len(args))
         self.operands: list = []           # the operand stack used by bytecode
         self.native = native
+        self.pc = None                     # current bytecode pc (or machine instruction index)
 
     def label(self) -> str:
         if self.native:
@@ -334,12 +430,14 @@ class Stack:
     def push(self, frame: Frame):
         if len(self.frames) >= self.max_frames:
             raise RuntimeError("StackOverflowError")
+        self.t.seal()
         self.frames.append(frame)
         self.deepest = max(self.deepest, len(self.frames))
         self.t.step("Stack", f"push frame for {frame.name} (depth {len(self.frames)})")
         self.t.box("thread stack (top first)", self.snapshot())
 
     def pop(self) -> Frame:
+        self.t.seal()
         frame = self.frames.pop()
         back_to = self.frames[-1].name if self.frames else "the JVM launcher"
         self.t.step("Stack", f"pop frame for {frame.name}, control returns to {back_to}")
@@ -389,6 +487,7 @@ class ClassLoader:
 
         # 3. Linking: build the in-memory structures (method area)
         cls = LoadedClass(cf)
+        t.seal()
         self.classes[name] = cls
         methods = ", ".join(cls.methods)
         t.step("ClassLoader", f"link {name}: method table [{methods}]"
@@ -416,8 +515,10 @@ class JIT:
         self.calls: dict[str, int] = {}
         self.compiled: dict[str, list[tuple]] = {}
         self.rejected: set[str] = set()
+        self.maps: dict[str, list] = {}     # bytecode index -> machine code range
 
     def record_call(self, key: str) -> int:
+        self.t.seal()
         self.calls[key] = self.calls.get(key, 0) + 1
         return self.calls[key]
 
@@ -426,11 +527,12 @@ class JIT:
         if n < self.threshold or key in self.compiled or key in self.rejected:
             return
         self.t.step("JIT", f"{key} has been called {n} times -> it is HOT, compile it to machine code")
-        code = self.translate(method)
+        code = self.translate(method, key)
         if code is None:
             self.rejected.add(key)
             self.t.detail("this tiny JIT only handles simple int maths; it stays interpreted", always=True)
             return
+        self.t.seal()
         self.compiled[key] = code
         lines = []
         bytecode = [f"{i['op']}{' ' + str(i['arg']) if 'arg' in i else ''}" for i in method["code"]]
@@ -441,15 +543,20 @@ class JIT:
         self.t.box(f"{key}: bytecode => x86-64 machine code", lines)
         self.t.step("JIT", f"machine code for {key} installed; next calls skip the interpreter")
 
-    def translate(self, method: dict):
+    def translate(self, method: dict, key: str = ""):
         """Map the operand stack onto CPU registers, one bytecode at a time."""
         if not method["static"]:
             return None
+        if any(not ins["op"].startswith(self.SUPPORTED) for ins in method["code"]):
+            return None
+        self.t.step("JIT", "translate bytecode -> machine code, keeping the operand stack in CPU registers")
+        self.t.detail("method arguments arrive in registers: "
+                      + ", ".join(f"local[{i}] -> {ARG_REGS[i]}" for i in range(method["max_locals"])))
         asm, free, vstack = [], list(SCRATCH_REGS), []
-        for ins in method["code"]:
+        mapping = []
+        for k, ins in enumerate(method["code"]):
             op, arg = ins["op"], ins.get("arg")
-            if not op.startswith(self.SUPPORTED):
-                return None
+            start = len(asm)
             if op.startswith("iload"):
                 slot = int(op.split("_")[1]) if "_" in op else arg
                 reg = free.pop(0)
@@ -472,6 +579,13 @@ class JIT:
                 if reg != "eax":
                     asm.append(("mov", "eax", reg))
                 asm.append(("ret",))
+            mapping.append([start, len(asm)])
+            bc = f"{op}{' ' + str(arg) if arg is not None else ''}"
+            out = "  +  ".join(asm_text(a) for a in asm[start:]) or "(nothing)"
+            self.t.micro("JIT", f"{bc:<10} => {out}")
+            self.t.mark(jitc={"key": key, "k": k, "asm": [asm_text(a) for a in asm],
+                              "vs": list(vstack), "free": list(free)})
+        self.maps[key] = mapping
         return asm
 
 
@@ -518,7 +632,7 @@ class JVM:
         self.t.step("JVM", f"looking for {class_name}.main(String[] args)")
         self.loader.load(class_name)
         self.t.step("JVM", f"calling {class_name}.main")
-        self.invoke(class_name, "main", ["String[0]"])
+        self.invoke(class_name, "main", [Opaque("String[0]")])
 
     # ---- calling a method: interpreted or native ----
     def invoke(self, cls_name: str, name: str, args: list):
@@ -530,7 +644,7 @@ class JVM:
             self.t.step("JVM", f"call #{n} of {key}: compiled version exists -> run on CPU directly")
             frame = Frame(key, 0, [], native=True)
             self.stack.push(frame)
-            result = self.cpu.run_native(key, self.jit.compiled[key], args)
+            result = self.cpu.run_native(key, self.jit.compiled[key], args, frame)
             self.stack.pop()
             return result
         if name not in ("<clinit>", "main"):
@@ -556,6 +670,8 @@ class JVM:
             jump = None
             note = ""
             text = f"{frame.name} pc={ins['pc']:<3} {op}{' ' + str(arg) if arg is not None else ''}"
+            t.seal()
+            frame.pc = ins["pc"]
             if not t.brief:
                 t.step("Interpreter", text)
 
@@ -578,8 +694,10 @@ class JVM:
                 frame.locals[slot] = ops.pop(); note = f"pop {show(frame.locals[slot])} into local[{slot}]"
             elif op == "iinc":
                 slot, delta = (int(x) for x in str(arg).split())
+                before = frame.locals[slot]
                 frame.locals[slot] = i32(frame.locals[slot] + delta)
                 note = f"local[{slot}] += {delta} -> {frame.locals[slot]}"
+                t.mark(alu={"op": "+", "a": before, "b": delta, "r": frame.locals[slot], "via": "interp", "ins": op})
 
             # --- arithmetic ---
             elif op in ("iadd", "isub", "imul", "idiv", "irem"):
@@ -590,6 +708,7 @@ class JVM:
                 r = {"iadd": a + b, "isub": a - b, "imul": a * b, "idiv": q, "irem": a - b * q}[op]
                 ops.append(i32(r))
                 sym = {"iadd": "+", "isub": "-", "imul": "*", "idiv": "/", "irem": "%"}[op]
+                t.mark(alu={"op": sym, "a": a, "b": b, "r": i32(r), "via": "interp", "ins": op})
                 note = f"pop {a} and {b}, CPU computes {a} {sym} {b} = {i32(r)}, push it"
             elif op == "ineg":
                 ops.append(i32(-ops.pop())); note = f"negate -> {ops[-1]}"
@@ -600,6 +719,8 @@ class JVM:
             elif op.startswith(("if_icmp", "if_acmp")):
                 b, a = ops.pop(), ops.pop()
                 taken = COMPARE[op[-2:]](a, b)
+                if isinstance(a, int) and isinstance(b, int):
+                    t.mark(alu={"op": op[-2:], "a": a, "b": b, "r": int(taken), "via": "interp", "ins": op})
                 note = f"compare {show(a)} {op[-2:]} {show(b)}: {'true -> jump to ' + str(arg) if taken else 'false -> continue'}"
                 if taken:
                     jump = arg
@@ -725,20 +846,45 @@ def compile_stage(source_path: str, disk: Disk, t: Tracer) -> str:
     return main_class
 
 
-def run(source_path: str, t: Tracer, jit_threshold: int = 2):
+def run(source_path: str, t: Tracer, jit_threshold: int = 2, json_path: str = None):
     disk_folder = os.path.join(os.path.dirname(os.path.abspath(source_path)), "disk")
     devices = Devices(disk_folder, t)
     cpu = CPU(t)
     os_ = OS(devices, cpu, t)
+    live = {}
+
+    def capture() -> dict:
+        snap = {
+            "con": devices.console.text,
+            "disk": list(devices.disk.files),
+            "reg": dict(cpu.registers),
+            "cnt": [cpu.bytecodes, cpu.native],
+            "proc": live["proc"].state if "proc" in live else None,
+        }
+        jvm_ = live.get("jvm")
+        if jvm_:
+            snap["fr"] = [{"k": f.name, "pc": f.pc, "nat": f.native,
+                           "loc": [enc(v) for v in f.locals], "ops": [enc(v) for v in f.operands]}
+                          for f in jvm_.stack.frames]
+            snap["heap"] = [{"a": a, "c": o["class"], "f": {k: enc(v) for k, v in o["fields"].items()}}
+                            for a, o in jvm_.heap.objects.items()]
+            snap["cls"] = list(jvm_.loader.classes)
+            snap["calls"] = dict(jvm_.jit.calls)
+            snap["jit"] = list(jvm_.jit.compiled)
+        return snap
+
+    t.capture = capture
 
     main_class = compile_stage(source_path, devices.disk, t)
 
     t.stage(2, "OPERATING SYSTEM starts the JVM process",
             f"The user runs: java {main_class}")
     proc = os_.spawn(f"java {main_class}")
+    live["proc"] = proc
 
     t.stage(3, "JVM BOOTS", "The JVM is just a program; now it builds its Heap, Stack and loaders.")
     jvm = JVM(os_, proc, t, jit_threshold)
+    live["jvm"] = jvm
 
     t.stage(4, "CLASS LOADING + EXECUTION",
             "Classes are loaded on demand. The interpreter runs bytecode; hot code gets JIT-compiled.")
@@ -748,6 +894,31 @@ def run(source_path: str, t: Tracer, jit_threshold: int = 2):
     t.step("JVM", "main returned and no other threads are running -> shut down")
     t.box("final heap", jvm.heap.snapshot())
     os_.exit(proc, 0)
+    t.finish()
+
+    if json_path and t.events is not None:
+        with open(source_path) as f:
+            source = f.read()
+        classes = {}
+        for name in devices.disk.files:
+            with open(os.path.join(devices.disk.folder, name)) as f:
+                cf = json.load(f)
+            classes[cf["this_class"]] = cf
+        trace = {
+            "source": source,
+            "file": os.path.basename(source_path),
+            "main": main_class,
+            "pid": proc.pid,
+            "memory": [[k, v[0], v[1]] for k, v in proc.memory.items()],
+            "classes": classes,
+            "jit": {k: {"asm": [asm_text(a) for a in code], "map": jvm.jit.maps.get(k, [])}
+                    for k, code in jvm.jit.compiled.items()},
+            "threshold": jit_threshold,
+            "output": devices.console.text,
+            "events": t.events,
+        }
+        with open(json_path, "w") as f:
+            json.dump(trace, f, separators=(",", ":"))
 
     print()
     print("=" * 78)
@@ -790,6 +961,7 @@ def main():
     p.add_argument("--jit-threshold", type=int, default=2, help="calls before a method is JIT-compiled")
     p.add_argument("--out", default="trace.txt", help="file to save the trace to (default: trace.txt)")
     p.add_argument("--quiet", action="store_true", help="only write to the file, not the screen")
+    p.add_argument("--json", help="also save a machine-readable trace (used by the visualisation)")
     a = p.parse_args()
 
     screen = sys.stdout
@@ -797,7 +969,7 @@ def main():
     with open(a.out, "w", encoding="utf-8") as f:
         sys.stdout = f if a.quiet else Tee(screen, f)
         try:
-            run(a.source, Tracer(a.step, a.delay, a.brief), a.jit_threshold)
+            run(a.source, Tracer(a.step, a.delay, a.brief, record=bool(a.json)), a.jit_threshold, a.json)
         except CompileError as e:
             print(f"javac error: {e}")
             code = 1
@@ -807,6 +979,8 @@ def main():
         finally:
             sys.stdout = screen
     print(f"\nTrace saved to {os.path.abspath(a.out)}")
+    if a.json and code == 0:
+        print(f"JSON trace saved to {os.path.abspath(a.json)}")
     sys.exit(code)
 
 

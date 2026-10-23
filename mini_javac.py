@@ -465,11 +465,14 @@ class Instruction:
     pc: int                 # byte offset inside the method, like real bytecode
     op: str                 # mnemonic, e.g. "iload_1"
     arg: object = None      # operand: number, symbolic reference, or jump target pc
+    line: int = 0           # Java source line this instruction came from
 
     def to_dict(self) -> dict:
         d = {"pc": self.pc, "op": self.op}
         if self.arg is not None:
             d["arg"] = self.arg
+        if self.line:
+            d["line"] = self.line
         return d
 
 
@@ -588,11 +591,12 @@ class MethodGen:
         self.depth = 0                                  # current operand stack depth
         self.max_depth = 0
         self.label_depth: dict[Label, int] = {}
+        self.cur_line = 0                               # source line being compiled (line number table)
         self.max_locals = self.next_slot                # most slots in use at any one time
 
     # ---- emitting instructions ----
     def emit(self, op: str, arg=None, delta: Optional[int] = None):
-        self.code.append([op, arg])
+        self.code.append([op, arg, self.cur_line])
         if delta is None:
             delta = self.stack_delta(op)
         self.depth += delta
@@ -669,16 +673,16 @@ class MethodGen:
             return 1
 
         pcs, pc = [], 0
-        for op, _ in self.code:
+        for op, *_ in self.code:
             pcs.append(pc)
             pc += size(op)
         pcs.append(pc)
 
         out = []
-        for (op, arg), at in zip(self.code, pcs):
+        for (op, arg, line), at in zip(self.code, pcs):
             if isinstance(arg, Label):
                 arg = pcs[arg.index]
-            out.append(Instruction(at, op, arg))
+            out.append(Instruction(at, op, arg, line))
         return out, self.max_depth, self.max_locals
 
 
@@ -714,6 +718,7 @@ class Compiler:
         if static_inits:
             self.m = MethodGen(self.cls, static=True)
             for f in static_inits:
+                self.m.cur_line = f.line
                 self.gen_expr(f.init)
                 self.m.emit("putstatic", f"{decl.name}.{f.name}:{descriptor(f.type)}")
             self.m.emit("return")
@@ -724,6 +729,7 @@ class Compiler:
 
     def compile_method(self, decl: MethodDecl, cls_decl: ClassDecl) -> MethodInfo:
         self.m = MethodGen(self.cls, decl.static)
+        self.m.cur_line = decl.line
         for typ, name in decl.params:
             self.m.declare(name, typ, decl.line)
 
@@ -751,6 +757,8 @@ class Compiler:
     # ---- statements ----
     def gen_stmt(self, s: Node, method: MethodDecl):
         m = self.m
+        if s.line and not isinstance(s, Block):
+            m.cur_line = s.line
         if isinstance(s, Block):
             saved = m.open_scope()
             for st in s.stmts:

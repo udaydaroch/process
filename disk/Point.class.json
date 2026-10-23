@@ -24,42 +24,51 @@
       "code": [
         {
           "pc": 0,
-          "op": "aload_0"
+          "op": "aload_0",
+          "line": 20
         },
         {
           "pc": 1,
           "op": "invokespecial",
-          "arg": "java/lang/Object.<init>:()V"
+          "arg": "java/lang/Object.<init>:()V",
+          "line": 20
         },
         {
           "pc": 4,
-          "op": "aload_0"
+          "op": "aload_0",
+          "line": 21
         },
         {
           "pc": 5,
-          "op": "iload_1"
+          "op": "iload_1",
+          "line": 21
         },
         {
           "pc": 6,
           "op": "putfield",
-          "arg": "Point.x:I"
+          "arg": "Point.x:I",
+          "line": 21
         },
         {
           "pc": 9,
-          "op": "aload_0"
+          "op": "aload_0",
+          "line": 22
         },
         {
           "pc": 10,
-          "op": "iload_2"
+          "op": "iload_2",
+          "line": 22
         },
         {
           "pc": 11,
           "op": "putfield",
-          "arg": "Point.y:I"
+          "arg": "Point.y:I",
+          "line": 22
         },
         {
           "pc": 14,
-          "op": "return"
+          "op": "return",
+          "line": 22
         }
       ]
     },
@@ -72,29 +81,35 @@
       "code": [
         {
           "pc": 0,
-          "op": "aload_0"
+          "op": "aload_0",
+          "line": 26
         },
         {
           "pc": 1,
           "op": "getfield",
-          "arg": "Point.x:I"
+          "arg": "Point.x:I",
+          "line": 26
         },
         {
           "pc": 4,
-          "op": "aload_0"
+          "op": "aload_0",
+          "line": 26
         },
         {
           "pc": 5,
           "op": "getfield",
-          "arg": "Point.y:I"
+          "arg": "Point.y:I",
+          "line": 26
         },
         {
           "pc": 8,
-          "op": "iadd"
+          "op": "iadd",
+          "line": 26
         },
         {
           "pc": 9,
-          "op": "ireturn"
+          "op": "ireturn",
+          "line": 26
         }
       ]
     }

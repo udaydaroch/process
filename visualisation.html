@@ -1,0 +1,1164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Source to Silicon</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a sticky transport bar, then a circuit-board system map beside the live narration,
+   then six instrument panels (code, memory, CPU, JIT, OS + devices, event log).
+   Look: printed circuit board. Solder-mask green, copper traces, silkscreen labels. */
+:root {
+  --bg: #e7eee9;
+  --panel: #fbfcfb;
+  --panel-2: #f0f5f1;
+  --line: #cbd8d0;
+  --line-2: #afc2b7;
+  --ink: #0f221b;
+  --muted: #536b62;
+  --faint: #86a096;
+  --trace: #c99a72;
+  --trace-hot: #b3561c;
+  --c-build: #6448c2;
+  --c-jvm: #1c6aa3;
+  --c-jit: #946a00;
+  --c-native: #147f53;
+  --c-kernel: #ae3680;
+  --c-io: #b3561c;
+  --term-bg: #10201a;
+  --term-ink: #c9ead9;
+  --term-dim: #6f9284;
+  --font-display: "Chakra Petch", "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #09160f; --panel: #0e1f18; --panel-2: #12281f; --line: #1d3a2e; --line-2: #2a5141;
+    --ink: #e2eee7; --muted: #8fab9f; --faint: #5d7d70;
+    --trace: #6e4b2f; --trace-hot: #f2a35c;
+    --c-build: #b3a1ff; --c-jvm: #6dbcff; --c-jit: #f1c85b; --c-native: #5de0a0; --c-kernel: #f38bc6; --c-io: #f2a35c;
+    --term-bg: #050e0a; --term-ink: #bdf0d4; --term-dim: #5f8a78;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #09160f; --panel: #0e1f18; --panel-2: #12281f; --line: #1d3a2e; --line-2: #2a5141;
+  --ink: #e2eee7; --muted: #8fab9f; --faint: #5d7d70;
+  --trace: #6e4b2f; --trace-hot: #f2a35c;
+  --c-build: #b3a1ff; --c-jvm: #6dbcff; --c-jit: #f1c85b; --c-native: #5de0a0; --c-kernel: #f38bc6; --c-io: #f2a35c;
+  --term-bg: #050e0a; --term-ink: #bdf0d4; --term-dim: #5f8a78;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap {
+  max-width: 1480px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+code, .mono { font-family: var(--font-mono); }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--c-jit); outline-offset: 2px; }
+
+/* ---------- header ---------- */
+.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 10px 24px; }
+.top h1 {
+  font-family: var(--font-display); font-weight: 600; font-size: clamp(26px, 3.4vw, 38px);
+  letter-spacing: .01em; margin: 0; line-height: 1.05; text-wrap: balance;
+}
+.top h1 span { color: var(--trace-hot); }
+.top p { margin: 6px 0 0; color: var(--muted); max-width: 68ch; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  font-family: var(--font-mono); font-size: 12px; padding: 3px 8px; border-radius: 4px;
+  border: 1px solid var(--line-2); color: var(--muted); background: var(--panel);
+}
+
+/* ---------- transport ---------- */
+.transport {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.trow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.btn {
+  border: 1px solid var(--line-2); background: var(--panel); border-radius: 6px;
+  padding: 6px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 500; min-height: 34px;
+}
+.btn:hover { border-color: var(--trace-hot); }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.primary:hover { background: var(--trace-hot); border-color: var(--trace-hot); }
+.btn svg { width: 14px; height: 14px; fill: currentColor; }
+.speed { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.speed select { background: var(--panel); border: 1px solid var(--line-2); border-radius: 6px; padding: 5px 6px; }
+.stepno { margin-left: auto; font-family: var(--font-mono); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stepno b { color: var(--ink); font-weight: 600; }
+#scrub { width: 100%; accent-color: var(--trace-hot); margin: 0; }
+.tracks { display: flex; flex-direction: column; gap: 3px; }
+.stagetrack { display: flex; gap: 2px; height: 20px; }
+.stagetrack button {
+  border: 0; padding: 0 6px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 11px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600;
+  background: var(--panel-2); color: var(--muted); border-radius: 3px; min-width: 18px; text-align: left;
+}
+.stagetrack button.on { background: var(--ink); color: var(--bg); }
+.modetrack { display: flex; height: 10px; border-radius: 2px; overflow: hidden; cursor: pointer; position: relative; }
+.modetrack i { flex: 1; display: block; opacity: .55; }
+.modetrack i.past { opacity: 1; }
+.modetrack i.cur { outline: 2px solid var(--ink); outline-offset: -1px; opacity: 1; position: relative; z-index: 1; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+.m-build { background: var(--c-build); } .m-jvm { background: var(--c-jvm); } .m-jit { background: var(--c-jit); }
+.m-native { background: var(--c-native); } .m-kernel { background: var(--c-kernel); } .m-io { background: var(--c-io); }
+
+/* ---------- grid ---------- */
+.grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, 1fr); }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px 14px; min-width: 0; display: flex; flex-direction: column; gap: 10px;
+}
+.card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.card h2 {
+  margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 15px;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.card h2 small { font-family: var(--font-body); text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; }
+.card.active-card { border-color: var(--accent, var(--line-2)); box-shadow: 0 0 0 1px var(--accent, transparent) inset; }
+.sub { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.mapc { grid-column: 1 / 3; }
+.nowc { grid-column: 3; }
+
+@media (max-width: 1180px) {
+  .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .mapc, .nowc { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .stepno { margin-left: 0; }
+}
+
+/* ---------- system map ---------- */
+.mapscroll { overflow-x: auto; margin: 0 -4px; }
+#map { display: block; width: 100%; min-width: 660px; height: auto; }
+#map .trace { fill: none; stroke: var(--trace); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: stroke .2s; }
+#map .trace.hot { stroke: var(--trace-hot); stroke-width: 3; }
+#map .via { fill: var(--panel); stroke: var(--trace); stroke-width: 2; }
+#map .zone { fill: none; stroke: var(--line-2); stroke-dasharray: 4 4; }
+#map .zlabel { fill: var(--faint); font: 600 10px var(--font-body); letter-spacing: .1em; text-transform: uppercase; }
+#map .node rect { fill: var(--panel-2); stroke: var(--line-2); stroke-width: 1.2; transition: fill .2s, stroke .2s; }
+#map .node .nm { fill: var(--ink); font: 600 13px var(--font-display); letter-spacing: .03em; }
+#map .node .ns { fill: var(--muted); font: 10.5px var(--font-body); }
+#map .node .pin { fill: var(--c); opacity: .9; }
+#map .node { cursor: pointer; }
+#map .node.on rect { fill: color-mix(in srgb, var(--c) 18%, var(--panel)); stroke: var(--c); stroke-width: 2.2; }
+#map .node.on { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c) 55%, transparent)); }
+#map .node.assist rect { stroke: var(--c); stroke-dasharray: 3 3; }
+#map .pulse { fill: var(--c-jit); stroke: var(--panel); stroke-width: 1.5; }
+
+/* ---------- now ---------- */
+.now-who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display); font-weight: 600;
+  font-size: 13px; letter-spacing: .05em; text-transform: uppercase; padding: 3px 9px 2px; border-radius: 4px;
+  color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+}
+.modepill { font-size: 12px; color: var(--muted); }
+.now-msg { font-size: 18px; line-height: 1.35; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
+.now-msg code { font-size: .92em; }
+.now-det { margin: 0; padding: 8px 10px; background: var(--panel-2); border-radius: 6px; font-family: var(--font-mono); font-size: 12.5px; list-style: none; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.now-det:empty { display: none; }
+.now-why { margin: 0; color: var(--muted); font-size: 13px; border-left: 2px solid var(--c); padding-left: 10px; }
+.hint { font-size: 12.5px; color: var(--muted); background: color-mix(in srgb, var(--c-jit) 12%, transparent); border: 1px solid color-mix(in srgb, var(--c-jit) 40%, transparent); padding: 7px 10px; border-radius: 6px; }
+
+/* ---------- code ---------- */
+.src, .bc { font-family: var(--font-mono); font-size: 12.5px; background: var(--panel-2); border-radius: 6px; overflow: auto; }
+.src { max-height: 330px; padding: 6px 0; }
+.src div { display: grid; grid-template-columns: 34px 1fr; white-space: pre; padding-right: 10px; border-left: 3px solid transparent; }
+.src div b { color: var(--faint); font-weight: 400; text-align: right; padding-right: 10px; user-select: none; }
+.src div.cur { background: color-mix(in srgb, var(--c-jvm) 16%, transparent); border-left-color: var(--c-jvm); }
+.src div.cur.native { background: color-mix(in srgb, var(--c-native) 16%, transparent); border-left-color: var(--c-native); }
+.k { color: var(--c-kernel); } .t { color: var(--c-jvm); } .n { color: var(--c-io); } .s { color: var(--c-native); } .cm { color: var(--faint); }
+.bchead { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.bchead .mono { font-size: 12px; color: var(--muted); }
+.bc { max-height: 300px; }
+.bc table { border-collapse: collapse; width: 100%; }
+.bc td { padding: 1px 8px; white-space: nowrap; }
+.bc td.pc { color: var(--faint); text-align: right; width: 1%; }
+.bc td.hex { color: var(--faint); width: 1%; }
+.bc td.op { color: var(--ink); font-weight: 500; }
+.bc td.arg { color: var(--muted); }
+.bc td.ln { color: var(--faint); text-align: right; width: 1%; }
+.bc tr.cur td { background: color-mix(in srgb, var(--c-jvm) 18%, transparent); }
+.bc tr.cur td.pc { box-shadow: inset 3px 0 0 var(--c-jvm); }
+.bc.dim tr td { opacity: .45; }
+.tag { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+
+/* ---------- memory ---------- */
+.memgrid { position: relative; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 22px; }
+@media (max-width: 520px) { .memgrid { grid-template-columns: minmax(0, 1fr); gap: 28px; } }
+#arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+#arrows path { fill: none; stroke: var(--c-jvm); stroke-width: 1.6; opacity: .85; }
+#arrows circle { fill: var(--c-jvm); }
+.col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.colhead { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.colhead .mono { font-size: 11px; color: var(--faint); }
+.frames { display: flex; flex-direction: column; gap: 6px; }
+.frame { border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); padding: 7px 8px; display: flex; flex-direction: column; gap: 6px; }
+.frame.top { border-color: var(--c-jvm); box-shadow: 0 0 0 1px var(--c-jvm) inset; }
+.frame.native { border-color: var(--c-native); box-shadow: 0 0 0 1px var(--c-native) inset; }
+.frame.enter { animation: drop .35s ease-out; }
+@keyframes drop { from { transform: translateY(-8px); opacity: .2; } to { transform: none; opacity: 1; } }
+.fhead { display: flex; justify-content: space-between; gap: 6px; font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.fhead span { color: var(--muted); font-weight: 400; }
+.slots { display: flex; flex-wrap: wrap; gap: 4px; }
+.slot { display: inline-flex; align-items: stretch; border: 1px solid var(--line-2); border-radius: 4px; overflow: hidden; font-family: var(--font-mono); font-size: 12px; background: var(--panel); }
+.slot i { font-style: normal; padding: 1px 5px; background: var(--line); color: var(--muted); font-size: 11px; display: flex; align-items: center; }
+.slot b { font-weight: 500; padding: 1px 6px; }
+.slot.empty b { color: var(--faint); }
+.opstack { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-height: 22px; }
+.opstack .lbl { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.opv { font-family: var(--font-mono); font-size: 12px; padding: 1px 6px; border-radius: 3px; background: color-mix(in srgb, var(--c-jvm) 14%, var(--panel)); border: 1px solid color-mix(in srgb, var(--c-jvm) 35%, transparent); }
+.opv.topv { border-color: var(--c-jvm); font-weight: 600; }
+.opempty { font-size: 11px; color: var(--faint); font-family: var(--font-mono); }
+.ref { color: var(--c-jvm); font-weight: 600; }
+.str { color: var(--c-native); }
+.opq { color: var(--muted); font-style: italic; }
+.chg { animation: flash 1s ease-out; }
+@keyframes flash { 0% { background: color-mix(in srgb, var(--c-jit) 55%, transparent); } 100% { background: transparent; } }
+.obj { border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); font-family: var(--font-mono); font-size: 12px; overflow: hidden; }
+.obj .oh { display: flex; justify-content: space-between; gap: 6px; padding: 5px 8px; background: color-mix(in srgb, var(--c-jvm) 12%, transparent); border-bottom: 1px solid var(--line-2); }
+.obj .oh b { font-weight: 600; }
+.obj .oh span { color: var(--muted); }
+.obj .of { display: grid; grid-template-columns: auto 1fr auto; gap: 0 10px; padding: 3px 8px; }
+.obj .of span { color: var(--faint); }
+.obj .of em { font-style: normal; color: var(--muted); }
+.obj.new { animation: pop .5s ease-out; }
+@keyframes pop { 0% { transform: scale(.9); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c-jit) 60%, transparent); } 100% { transform: none; box-shadow: none; } }
+.usage { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.usage i { display: block; height: 100%; background: var(--c-jvm); min-width: 2px; }
+.mclasses { display: flex; flex-wrap: wrap; gap: 4px; }
+.mclasses span { font-family: var(--font-mono); font-size: 12px; padding: 1px 7px; border-radius: 3px; border: 1px solid var(--line-2); background: var(--panel); }
+.emptynote { font-size: 12.5px; color: var(--faint); padding: 10px; border: 1px dashed var(--line-2); border-radius: 6px; text-align: center; }
+
+/* ---------- cpu ---------- */
+.modebar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--c) 13%, transparent); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+.led { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); flex: none; }
+.modebar b { font-family: var(--font-display); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; font-size: 13px; }
+.modebar span { font-size: 12.5px; color: var(--muted); }
+.alu { border: 1px solid var(--line-2); border-radius: 6px; padding: 10px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: center; background: var(--panel-2); }
+.alu .chipname { grid-row: span 2; font-family: var(--font-display); font-weight: 600; font-size: 13px; letter-spacing: .08em; width: 52px; height: 52px; border: 2px solid var(--line-2); border-radius: 6px; display: grid; place-items: center; color: var(--muted); position: relative; }
+.alu.live .chipname { border-color: var(--c-jit); color: var(--c-jit); }
+.alu .eq { font-family: var(--font-mono); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.alu .via { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.alu.stale .eq { color: var(--muted); }
+.fde { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.fde div { border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 7px; min-width: 0; background: var(--panel-2); }
+.fde div.on { border-color: var(--c-jvm); }
+.fde.native div.on { border-color: var(--c-native); }
+.fde b { display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.fde span { font-family: var(--font-mono); font-size: 12px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.regs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.reg { border: 1px solid var(--line-2); border-radius: 5px; padding: 4px 7px; font-family: var(--font-mono); display: flex; justify-content: space-between; gap: 6px; font-size: 12.5px; background: var(--panel-2); }
+.reg i { font-style: normal; color: var(--muted); }
+.reg b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.reg.used b { color: var(--c-native); }
+.reg.wide { grid-column: span 3; }
+.counters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.counter { border-top: 2px solid var(--c); padding-top: 4px; }
+.counter b { font-family: var(--font-mono); font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; display: block; }
+.counter span { font-size: 12px; color: var(--muted); }
+
+/* ---------- jit ---------- */
+.hot { display: flex; flex-direction: column; gap: 6px; }
+.hotrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(40px, 80px) auto; gap: 8px; align-items: center; font-family: var(--font-mono); font-size: 12px; }
+.hotrow .bar { height: 8px; border-radius: 4px; background: var(--line); position: relative; overflow: hidden; }
+.hotrow .bar i { position: absolute; inset: 0 auto 0 0; background: var(--c-jit); }
+.hotrow .state { font-family: var(--font-body); font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; text-align: right; color: var(--faint); }
+.hotrow .state.hotc { color: var(--c-jit); }
+.hotrow .state.done { color: var(--c-native); }
+.xlate { font-family: var(--font-mono); font-size: 12.5px; border: 1px solid var(--line-2); border-radius: 6px; overflow-x: auto; }
+.xlate table { border-collapse: collapse; width: 100%; }
+.xlate th { text-align: left; font-family: var(--font-body); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 5px 8px; background: var(--panel-2); font-weight: 600; white-space: nowrap; }
+.xlate td { padding: 3px 8px; border-top: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+.xlate td.arrow { color: var(--c-jit); }
+.xlate td.bytes { color: var(--faint); }
+.xlate tr.pending td { opacity: .3; }
+.xlate tr.pending td.asm { color: transparent; }
+.xlate tr.cur td { background: color-mix(in srgb, var(--c-jit) 16%, transparent); }
+.xlate tr.run td { background: color-mix(in srgb, var(--c-native) 18%, transparent); }
+.vstack { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
+.vstack .r { font-family: var(--font-mono); padding: 1px 7px; border-radius: 3px; border: 1px solid var(--c-jit); color: var(--c-jit); }
+.vstack .f { font-family: var(--font-mono); padding: 1px 7px; border-radius: 3px; border: 1px dashed var(--line-2); color: var(--faint); }
+
+/* ---------- os + devices ---------- */
+.proc { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 13px; }
+.state { font-family: var(--font-body); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line-2); color: var(--muted); }
+.state.running { color: var(--c-native); border-color: var(--c-native); }
+.state.terminated { color: var(--c-kernel); border-color: var(--c-kernel); }
+.mmap { display: flex; flex-direction: column; gap: 4px; }
+.mm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; font-size: 12px; }
+.mm .mono { color: var(--muted); font-size: 11.5px; }
+.mm .bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.mm .bar i { display: block; height: 100%; background: var(--c-kernel); opacity: .7; }
+.syscall { font-family: var(--font-mono); font-size: 12.5px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); overflow-wrap: anywhere; }
+.syscall.live { border-color: var(--c-kernel); box-shadow: 0 0 0 1px var(--c-kernel) inset; }
+.syscall .k { font-weight: 600; }
+.disk { display: flex; flex-direction: column; gap: 4px; }
+.file { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--line-2); border-radius: 5px; background: var(--panel-2); }
+.file .led { width: 8px; height: 8px; background: var(--line-2); box-shadow: none; }
+.file.live .led { background: var(--c-io); box-shadow: 0 0 8px var(--c-io); }
+.file .io { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+.file .fn { overflow-wrap: anywhere; }
+.term { background: var(--term-bg); color: var(--term-ink); font-family: var(--font-mono); font-size: 13px; border-radius: 6px; padding: 10px 12px; min-height: 92px; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line-2); }
+.term .p { color: var(--term-dim); }
+.term .out { color: var(--term-ink); font-weight: 600; }
+.term .out.fresh { text-shadow: 0 0 10px var(--term-ink); }
+.cursor { display: inline-block; width: 8px; height: 1.05em; background: var(--term-ink); vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 1180px) and (min-width: 761px) { .split { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 460px) { .split { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- log ---------- */
+.log { max-height: 440px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+.log ol { list-style: none; margin: 0; padding: 0; }
+.log li { display: grid; grid-template-columns: 34px 86px minmax(0, 1fr); gap: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--line); align-items: baseline; }
+.log li:hover { background: var(--panel-2); }
+.log li .n { font-family: var(--font-mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+.log li .w { font-weight: 600; color: var(--c); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.log li .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.log li.micro .m { padding-left: 12px; font-family: var(--font-mono); font-size: 11.5px; }
+.log li.cur { background: color-mix(in srgb, var(--c) 16%, transparent); }
+.log li.cur .m { color: var(--ink); }
+.log li.future { opacity: .55; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Source <span>→</span> Silicon</h1>
+      <p>One real run of <code id="fileName">Main.java</code>, replayed step by step: javac, the OS, the JVM's class loader, interpreter, stack and heap, the JIT compiler, the CPU and the devices. Every frame is a snapshot recorded by the Python simulator.</p>
+    </div>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <div class="transport" role="region" aria-label="Playback">
+    <div class="trow">
+      <button class="btn primary" id="bRestart" type="button"><svg viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 1-5.7 7.9l1.9-.6A4 4 0 1 0 8 4v2L4.5 3 8 0z"/></svg>Run from start</button>
+      <button class="btn" id="bPrev" type="button" aria-label="Previous step"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+      <button class="btn" id="bPlay" type="button"><svg viewBox="0 0 16 16" id="playIcon"><path d="M4 2l10 6-10 6z"/></svg><span id="playLbl">Play</span></button>
+      <button class="btn" id="bNext" type="button" aria-label="Next step"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2v12l8-6z"/></svg></button>
+      <label class="speed" for="speed">Speed
+        <select id="speed">
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+          <option value="8">8×</option>
+        </select>
+      </label>
+      <div class="stepno">Step <b id="stepNo">1</b> of <span id="stepTot">1</span></div>
+    </div>
+    <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Step">
+    <div class="tracks">
+      <div class="stagetrack" id="stageTrack"></div>
+      <div class="modetrack" id="modeTrack" title="What the CPU is doing at each step. Click to jump."></div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <main class="grid">
+    <section class="card mapc" id="mapCard">
+      <header><h2>System map<small>who is working right now, and what they talk to</small></h2></header>
+      <div class="mapscroll"><svg id="map" viewBox="0 0 1000 272" role="img" aria-label="Diagram of javac, the JVM's parts, the OS kernel and the hardware, connected by traces"></svg></div>
+    </section>
+
+    <section class="card nowc" id="nowCard">
+      <header><h2>Now</h2><span class="mono" id="nowStage" style="font-size:12px;color:var(--muted)"></span></header>
+      <div class="now-who" id="nowWho"></div>
+      <p class="now-msg" id="nowMsg"></p>
+      <ul class="now-det" id="nowDet"></ul>
+      <p class="now-why" id="nowWhy"></p>
+      <div class="hint" id="hint" hidden></div>
+    </section>
+
+    <section class="card" id="codeCard">
+      <header><h2>Code<small>Java source and the bytecode javac made from it</small></h2></header>
+      <div class="sub">Java source</div>
+      <div class="src" id="src"></div>
+      <div class="bchead"><div class="sub" id="bcTitle">Bytecode</div><span class="mono" id="bcMeta"></span></div>
+      <div class="bc" id="bc"></div>
+    </section>
+
+    <section class="card" id="memCard">
+      <header><h2>Memory<small>stack frames on the left, objects on the heap on the right</small></h2></header>
+      <div class="memgrid" id="memgrid">
+        <svg id="arrows" aria-hidden="true"></svg>
+        <div class="col">
+          <div class="colhead"><div class="sub">Stack · main thread</div><span class="mono" id="stackMeta"></span></div>
+          <div class="frames" id="frames"></div>
+        </div>
+        <div class="col">
+          <div class="colhead"><div class="sub">Heap</div><span class="mono" id="heapMeta"></span></div>
+          <div class="frames" id="heap"></div>
+          <div class="colhead"><div class="sub">Method area</div><span class="mono">loaded classes</span></div>
+          <div class="mclasses" id="mclasses"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="cpuCard">
+      <header><h2>CPU<small>core 0</small></h2></header>
+      <div class="modebar" id="modebar"></div>
+      <div class="alu" id="alu"></div>
+      <div>
+        <div class="sub" style="margin-bottom:4px" id="fdeTitle">Interpreter loop</div>
+        <div class="fde" id="fde"></div>
+      </div>
+      <div>
+        <div class="sub" style="margin-bottom:4px">x86-64 registers</div>
+        <div class="regs" id="regs"></div>
+      </div>
+      <div>
+        <div class="sub" style="margin-bottom:4px">JVM interpreter state</div>
+        <div class="regs" id="vregs"></div>
+      </div>
+      <div class="counters" id="counters"></div>
+    </section>
+
+    <section class="card" id="jitCard">
+      <header><h2>JIT compiler<small id="jitPhase"></small></h2></header>
+      <div>
+        <div class="sub" style="margin-bottom:6px">Call counts <span id="thr" style="text-transform:none;letter-spacing:0;font-weight:400"></span></div>
+        <div class="hot" id="hot"></div>
+      </div>
+      <div class="sub" id="xTitle">Bytecode → machine code</div>
+      <div class="xlate" id="xlate"></div>
+      <div class="vstack" id="vstack"></div>
+    </section>
+
+    <section class="card" id="osCard">
+      <header><h2>OS &amp; devices</h2></header>
+      <div class="proc" id="proc"></div>
+      <div class="mmap" id="mmap"></div>
+      <div class="sub">Last system call</div>
+      <div class="syscall" id="syscall"></div>
+      <div class="split">
+        <div class="col"><div class="sub">Disk</div><div class="disk" id="disk"></div></div>
+        <div class="col"><div class="sub">Console</div><div class="term" id="term"></div></div>
+      </div>
+    </section>
+
+    <section class="card" id="logCard">
+      <header><h2>Event log<small>click any step to jump to it</small></h2></header>
+      <div class="log" id="log"><ol id="logList"></ol></div>
+    </section>
+  </main>
+</div>
+
+<script type="application/json" id="trace">{"source":"public class Main {\n    static int square(int n) {\n        return n * n;\n    }\n\n    public static void main(String[] args) {\n        Point p = new Point(3, 4);\n        int total = 0;\n        for (int i = 1; i <= 3; i++) {\n            total += square(i);\n        }\n        System.out.println(total + p.sum());\n    }\n}\n\nclass Point {\n    int x;\n    int y;\n\n    Point(int x, int y) {\n        this.x = x;\n        this.y = y;\n    }\n\n    int sum() {\n        return x + y;\n    }\n}","file":"Main.java","main":"Main","pid":4242,"memory":[["code (JVM program)",4194304,16777216],["heap (objects)",4096,67108864],["stack (main thread)",2146435072,1048576]],"classes":{"Main":{"magic":"0xCAFEBABE","this_class":"Main","super_class":"java/lang/Object","fields":[],"methods":[{"name":"<init>","descriptor":"()V","static":false,"max_stack":1,"max_locals":1,"code":[{"pc":0,"op":"aload_0"},{"pc":1,"op":"invokespecial","arg":"java/lang/Object.<init>:()V"},{"pc":4,"op":"return"}]},{"name":"square","descriptor":"(I)I","static":true,"max_stack":2,"max_locals":1,"code":[{"pc":0,"op":"iload_0","line":3},{"pc":1,"op":"iload_0","line":3},{"pc":2,"op":"imul","line":3},{"pc":3,"op":"ireturn","line":3}]},{"name":"main","descriptor":"([Ljava/lang/String;)V","static":true,"max_stack":4,"max_locals":4,"code":[{"pc":0,"op":"new","arg":"Point","line":7},{"pc":3,"op":"dup","line":7},{"pc":4,"op":"iconst_3","line":7},{"pc":5,"op":"iconst_4","line":7},{"pc":6,"op":"invokespecial","arg":"Point.<init>:(II)V","line":7},{"pc":9,"op":"astore_1","line":7},{"pc":10,"op":"iconst_0","line":8},{"pc":11,"op":"istore_2","line":8},{"pc":12,"op":"iconst_1","line":9},{"pc":13,"op":"istore_3","line":9},{"pc":14,"op":"iload_3","line":9},{"pc":15,"op":"iconst_3","line":9},{"pc":16,"op":"if_icmpgt","arg":32,"line":9},{"pc":19,"op":"iload_2","line":10},{"pc":20,"op":"iload_3","line":10},{"pc":21,"op":"invokestatic","arg":"Main.square:(I)I","line":10},{"pc":24,"op":"iadd","line":10},{"pc":25,"op":"istore_2","line":10},{"pc":26,"op":"iinc","arg":"3 1","line":9},{"pc":29,"op":"goto","arg":14,"line":9},{"pc":32,"op":"getstatic","arg":"java/lang/System.out:Ljava/io/PrintStream;","line":12},{"pc":35,"op":"iload_2","line":12},{"pc":36,"op":"aload_1","line":12},{"pc":37,"op":"invokevirtual","arg":"Point.sum:()I","line":12},{"pc":40,"op":"iadd","line":12},{"pc":41,"op":"invokevirtual","arg":"java/io/PrintStream.println:(I)V","line":12},{"pc":44,"op":"return","line":12}]}]},"Point":{"magic":"0xCAFEBABE","this_class":"Point","super_class":"java/lang/Object","fields":[{"name":"x","descriptor":"I","static":false},{"name":"y","descriptor":"I","static":false}],"methods":[{"name":"<init>","descriptor":"(II)V","static":false,"max_stack":2,"max_locals":3,"code":[{"pc":0,"op":"aload_0","line":20},{"pc":1,"op":"invokespecial","arg":"java/lang/Object.<init>:()V","line":20},{"pc":4,"op":"aload_0","line":21},{"pc":5,"op":"iload_1","line":21},{"pc":6,"op":"putfield","arg":"Point.x:I","line":21},{"pc":9,"op":"aload_0","line":22},{"pc":10,"op":"iload_2","line":22},{"pc":11,"op":"putfield","arg":"Point.y:I","line":22},{"pc":14,"op":"return","line":22}]},{"name":"sum","descriptor":"()I","static":false,"max_stack":2,"max_locals":1,"code":[{"pc":0,"op":"aload_0","line":26},{"pc":1,"op":"getfield","arg":"Point.x:I","line":26},{"pc":4,"op":"aload_0","line":26},{"pc":5,"op":"getfield","arg":"Point.y:I","line":26},{"pc":8,"op":"iadd","line":26},{"pc":9,"op":"ireturn","line":26}]}]}},"jit":{"Main.square":{"asm":["mov eax, edi","mov r8d, edi","imul eax, r8d","ret"],"map":[[0,1],[1,2],[2,3],[3,4]]}},"threshold":2,"output":"21\n","events":[{"who":"javac","msg":"read Main.java (28 lines)","det":[],"stage":1,"s":{"con":"","disk":[],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"javac","msg":"lexer: split the text into 128 tokens: public class Main { static int square ( int n ) { ...","det":[],"stage":1,"s":{"con":"","disk":[],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"javac","msg":"parser: built a syntax tree for 2 classes: Main, Point","det":[],"stage":1,"s":{"con":"","disk":[],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"javac","msg":"code generator: Main -> 3 methods, 34 bytecode instructions","det":[],"stage":1,"box":[{"t":"Main.class (javap -c)","l":["class Main extends java/lang/Object {","","  <init>()V","    Code: stack=1, locals=1","         0: aload_0","         1: invokespecial java/lang/Object.<init>:()V","         4: return","","  static square(I)I","    Code: stack=2, locals=1","         0: iload_0","         1: iload_0","         2: imul","         3: ireturn","","  static main([Ljava/lang/String;)V","    Code: stack=4, locals=4","         0: new Point","         3: dup","         4: iconst_3","         5: iconst_4","         6: invokespecial Point.<init>:(II)V","         9: astore_1","        10: iconst_0","        11: istore_2","        12: iconst_1","        13: istore_3","        14: iload_3","        15: iconst_3","        16: if_icmpgt 32","        19: iload_2","        20: iload_3","        21: invokestatic Main.square:(I)I","        24: iadd","        25: istore_2","        26: iinc 3 1","        29: goto 14","        32: getstatic java/lang/System.out:Ljava/io/PrintStream;","        35: iload_2","        36: aload_1","        37: invokevirtual Point.sum:()I","        40: iadd","        41: invokevirtual java/io/PrintStream.println:(I)V","        44: return","}"]}],"s":{"con":"","disk":[],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"Disk","msg":"wrote Main.class.json (3915 bytes) to storage","det":[],"stage":1,"io":{"op":"write","file":"Main.class.json","bytes":3915},"s":{"con":"","disk":["Main.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"javac","msg":"code generator: Point -> 2 methods, 15 bytecode instructions","det":[],"stage":1,"box":[{"t":"Point.class (javap -c)","l":["class Point extends java/lang/Object {","  I x;","  I y;","","  <init>(II)V","    Code: stack=2, locals=3","         0: aload_0","         1: invokespecial java/lang/Object.<init>:()V","         4: aload_0","         5: iload_1","         6: putfield Point.x:I","         9: aload_0","        10: iload_2","        11: putfield Point.y:I","        14: return","","  sum()I","    Code: stack=2, locals=1","         0: aload_0","         1: getfield Point.x:I","         4: aload_0","         5: getfield Point.y:I","         8: iadd","         9: ireturn","}"]}],"s":{"con":"","disk":["Main.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"Disk","msg":"wrote Point.class.json (2090 bytes) to storage","det":[],"stage":1,"io":{"op":"write","file":"Point.class.json","bytes":2090},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"OS","msg":"user typed `java Main` in the terminal","det":[],"stage":2,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"OS","msg":"found the `java` program on disk and created process PID 4242","det":[],"stage":2,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"OS","msg":"gave the process its own virtual memory:","det":[],"stage":2,"box":[{"t":"PID 4242 memory map","l":["code (JVM program)   starts 0x000400000  size 16 MB","heap (objects)       starts 0x000001000  size 64 MB","stack (main thread)  starts 0x07ff00000  size 1 MB"]}],"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":null}},{"who":"OS","msg":"scheduler put PID 4242 on CPU core 0 -> the JVM starts running","det":[],"stage":2,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running"}},{"who":"JVM","msg":"booting: setting up the runtime data areas","det":["Heap created at 0x1000 for objects","Stack created for the main thread (one frame per running method)","ClassLoader ready to fetch .class files","Interpreter ready; JIT will compile a method after 2 calls"],"stage":3,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":[],"calls":{},"jit":[]}},{"who":"JVM","msg":"looking for Main.main(String[] args)","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":[],"calls":{},"jit":[]}},{"who":"ClassLoader","msg":"class Main is needed for the first time -> load it","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":[],"calls":{},"jit":[]}},{"who":"OS","msg":"system call read(\"Main.class.json\") from PID 4242 -> asking the Disk","det":[],"stage":4,"sys":{"call":"read","arg":"Main.class.json"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":[],"calls":{},"jit":[]}},{"who":"Disk","msg":"read Main.class.json (3915 bytes) from storage into RAM","det":[],"stage":4,"io":{"op":"read","file":"Main.class.json","bytes":3915},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":[],"calls":{},"jit":[]}},{"who":"ClassLoader","msg":"verify Main: magic number 0xCAFEBABE OK, all jumps land on real instructions","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":[],"calls":{},"jit":[]}},{"who":"ClassLoader","msg":"link Main: method table [<init>, square, main]","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":["Main"],"calls":{},"jit":[]}},{"who":"ClassLoader","msg":"initialize Main: nothing to run, class is ready","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":["Main"],"calls":{},"jit":[]}},{"who":"JVM","msg":"calling Main.main","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[0,0],"proc":"running","fr":[],"heap":[],"cls":["Main"],"calls":{},"jit":[]}},{"who":"Stack","msg":"push frame for Main.main (depth 1)","det":[],"stage":4,"box":[{"t":"thread stack (top first)","l":["Main.main  locals=[String[0], -, -, -]  operands=[]"]}],"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":null,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main"],"calls":{"Main.main":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=0   new Point","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main"],"calls":{"Main.main":1},"jit":[]}},{"who":"ClassLoader","msg":"class Point is needed for the first time -> load it","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main"],"calls":{"Main.main":1},"jit":[]}},{"who":"OS","msg":"system call read(\"Point.class.json\") from PID 4242 -> asking the Disk","det":[],"stage":4,"sys":{"call":"read","arg":"Point.class.json"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main"],"calls":{"Main.main":1},"jit":[]}},{"who":"Disk","msg":"read Point.class.json (2090 bytes) from storage into RAM","det":[],"stage":4,"io":{"op":"read","file":"Point.class.json","bytes":2090},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main"],"calls":{"Main.main":1},"jit":[]}},{"who":"ClassLoader","msg":"verify Point: magic number 0xCAFEBABE OK, all jumps land on real instructions","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main"],"calls":{"Main.main":1},"jit":[]}},{"who":"ClassLoader","msg":"link Point: method table [<init>, sum]","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main","Point"],"calls":{"Main.main":1},"jit":[]}},{"who":"ClassLoader","msg":"initialize Point: nothing to run, class is ready","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[1,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[]}],"heap":[],"cls":["Main","Point"],"calls":{"Main.main":1},"jit":[]}},{"who":"Heap","msg":"allocated a Point object at address 0x1000 (x=0, y=0, defaults)","det":["push reference Point@0x1000","operands=[Point@0x1000]  locals=[String[0], -, -, -]"],"stage":4,"heap":{"op":"new","addr":4096},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[2,0],"proc":"running","fr":[{"k":"Main.main","pc":0,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=3   dup","det":["duplicate Point@0x1000","operands=[Point@0x1000, Point@0x1000]  locals=[String[0], -, -, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[3,0],"proc":"running","fr":[{"k":"Main.main","pc":3,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"},{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=4   iconst_3","det":["push constant 3","operands=[Point@0x1000, Point@0x1000, 3]  locals=[String[0], -, -, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[4,0],"proc":"running","fr":[{"k":"Main.main","pc":4,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"},{"r":4096,"c":"Point"},3]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=5   iconst_4","det":["push constant 4","operands=[Point@0x1000, Point@0x1000, 3, 4]  locals=[String[0], -, -, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[5,0],"proc":"running","fr":[{"k":"Main.main","pc":5,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"},{"r":4096,"c":"Point"},3,4]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=6   invokespecial Point.<init>:(II)V","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[5,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1},"jit":[]}},{"who":"JVM","msg":"call #1 of Point.<init>: not compiled -> the interpreter runs it","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[5,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Stack","msg":"push frame for Point.<init> (depth 2)","det":[],"stage":4,"box":[{"t":"thread stack (top first)","l":["Point.<init>  locals=[Point@0x1000, 3, 4]  operands=[]","Main.main  locals=[String[0], -, -, -]  operands=[Point@0x1000]"]}],"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[6,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":null,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=0   aload_0","det":["push local[0] = Point@0x1000","operands=[Point@0x1000]  locals=[Point@0x1000, 3, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[7,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":0,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=1   invokespecial java/lang/Object.<init>:()V","det":["Object.<init> for Point@0x1000: nothing to do","operands=[]  locals=[Point@0x1000, 3, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[8,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":1,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=4   aload_0","det":["push local[0] = Point@0x1000","operands=[Point@0x1000]  locals=[Point@0x1000, 3, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[9,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":4,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=5   iload_1","det":["push local[1] = 3","operands=[Point@0x1000, 3]  locals=[Point@0x1000, 3, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[10,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":5,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[{"r":4096,"c":"Point"},3]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=6   putfield Point.x:I","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[10,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":6,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":0,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Heap","msg":"Point@0x1000.x = 3","det":["stored 3 into Point@0x1000.x","operands=[]  locals=[Point@0x1000, 3, 4]"],"stage":4,"heap":{"op":"put","addr":4096,"field":"x"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[11,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":6,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=9   aload_0","det":["push local[0] = Point@0x1000","operands=[Point@0x1000]  locals=[Point@0x1000, 3, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[12,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":9,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=10  iload_2","det":["push local[2] = 4","operands=[Point@0x1000, 4]  locals=[Point@0x1000, 3, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[13,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":10,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[{"r":4096,"c":"Point"},4]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=11  putfield Point.y:I","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[13,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":11,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":0}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Heap","msg":"Point@0x1000.y = 4","det":["stored 4 into Point@0x1000.y","operands=[]  locals=[Point@0x1000, 3, 4]"],"stage":4,"heap":{"op":"put","addr":4096,"field":"y"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[14,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":11,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Point.<init> pc=14  return","det":["return (void)"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[14,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]},{"k":"Point.<init>","pc":14,"nat":false,"loc":[{"r":4096,"c":"Point"},3,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Stack","msg":"pop frame for Point.<init>, control returns to Main.main","det":["Point.<init> finished","operands=[Point@0x1000]  locals=[String[0], -, -, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[15,0],"proc":"running","fr":[{"k":"Main.main","pc":6,"nat":false,"loc":[{"o":"String[0]"},null,null,null],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=9   astore_1","det":["pop Point@0x1000 into local[1]","operands=[]  locals=[String[0], Point@0x1000, -, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[16,0],"proc":"running","fr":[{"k":"Main.main","pc":9,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},null,null],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=10  iconst_0","det":["push constant 0","operands=[0]  locals=[String[0], Point@0x1000, -, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[17,0],"proc":"running","fr":[{"k":"Main.main","pc":10,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},null,null],"ops":[0]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=11  istore_2","det":["pop 0 into local[2]","operands=[]  locals=[String[0], Point@0x1000, 0, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[18,0],"proc":"running","fr":[{"k":"Main.main","pc":11,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,null],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=12  iconst_1","det":["push constant 1","operands=[1]  locals=[String[0], Point@0x1000, 0, -]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[19,0],"proc":"running","fr":[{"k":"Main.main","pc":12,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,null],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=13  istore_3","det":["pop 1 into local[3]","operands=[]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[20,0],"proc":"running","fr":[{"k":"Main.main","pc":13,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=14  iload_3","det":["push local[3] = 1","operands=[1]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[21,0],"proc":"running","fr":[{"k":"Main.main","pc":14,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=15  iconst_3","det":["push constant 3","operands=[1, 3]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[22,0],"proc":"running","fr":[{"k":"Main.main","pc":15,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[1,3]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=16  if_icmpgt 32","det":["compare 1 gt 3: false -> continue","operands=[]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"alu":{"op":"gt","a":1,"b":3,"r":0,"via":"interp","ins":"if_icmpgt"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[23,0],"proc":"running","fr":[{"k":"Main.main","pc":16,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=19  iload_2","det":["push local[2] = 0","operands=[0]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[24,0],"proc":"running","fr":[{"k":"Main.main","pc":19,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=20  iload_3","det":["push local[3] = 1","operands=[0, 1]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[25,0],"proc":"running","fr":[{"k":"Main.main","pc":20,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0,1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=21  invokestatic Main.square:(I)I","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[25,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1},"jit":[]}},{"who":"JVM","msg":"call #1 of Main.square: not compiled -> the interpreter runs it","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[25,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Stack","msg":"push frame for Main.square (depth 2)","det":[],"stage":4,"box":[{"t":"thread stack (top first)","l":["Main.square  locals=[1]  operands=[]","Main.main  locals=[String[0], Point@0x1000, 0, 1]  operands=[0]"]}],"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[26,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]},{"k":"Main.square","pc":null,"nat":false,"loc":[1],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=0   iload_0","det":["push local[0] = 1","operands=[1]  locals=[1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[27,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]},{"k":"Main.square","pc":0,"nat":false,"loc":[1],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=1   iload_0","det":["push local[0] = 1","operands=[1, 1]  locals=[1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[28,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]},{"k":"Main.square","pc":1,"nat":false,"loc":[1],"ops":[1,1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=2   imul","det":["pop 1 and 1, CPU computes 1 * 1 = 1, push it","operands=[1]  locals=[1]"],"stage":4,"alu":{"op":"*","a":1,"b":1,"r":1,"via":"interp","ins":"imul"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[29,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]},{"k":"Main.square","pc":2,"nat":false,"loc":[1],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=3   ireturn","det":["return 1"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[29,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0]},{"k":"Main.square","pc":3,"nat":false,"loc":[1],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Stack","msg":"pop frame for Main.square, control returns to Main.main","det":["Main.square returned 1, pushed it","operands=[0, 1]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[30,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[0,1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=24  iadd","det":["pop 0 and 1, CPU computes 0 + 1 = 1, push it","operands=[1]  locals=[String[0], Point@0x1000, 0, 1]"],"stage":4,"alu":{"op":"+","a":0,"b":1,"r":1,"via":"interp","ins":"iadd"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[31,0],"proc":"running","fr":[{"k":"Main.main","pc":24,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},0,1],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=25  istore_2","det":["pop 1 into local[2]","operands=[]  locals=[String[0], Point@0x1000, 1, 1]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[32,0],"proc":"running","fr":[{"k":"Main.main","pc":25,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,1],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=26  iinc 3 1","det":["local[3] += 1 -> 2","operands=[]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"alu":{"op":"+","a":1,"b":1,"r":2,"via":"interp","ins":"iinc"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[33,0],"proc":"running","fr":[{"k":"Main.main","pc":26,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=29  goto 14","det":["jump to pc 14","operands=[]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[34,0],"proc":"running","fr":[{"k":"Main.main","pc":29,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=14  iload_3","det":["push local[3] = 2","operands=[2]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[35,0],"proc":"running","fr":[{"k":"Main.main","pc":14,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[2]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=15  iconst_3","det":["push constant 3","operands=[2, 3]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[36,0],"proc":"running","fr":[{"k":"Main.main","pc":15,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[2,3]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=16  if_icmpgt 32","det":["compare 2 gt 3: false -> continue","operands=[]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"alu":{"op":"gt","a":2,"b":3,"r":0,"via":"interp","ins":"if_icmpgt"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[37,0],"proc":"running","fr":[{"k":"Main.main","pc":16,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=19  iload_2","det":["push local[2] = 1","operands=[1]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[38,0],"proc":"running","fr":[{"k":"Main.main","pc":19,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=20  iload_3","det":["push local[3] = 2","operands=[1, 2]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[39,0],"proc":"running","fr":[{"k":"Main.main","pc":20,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1,2]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"Interpreter","msg":"Main.main pc=21  invokestatic Main.square:(I)I","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[39,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":1},"jit":[]}},{"who":"JVM","msg":"call #2 of Main.square: not compiled -> the interpreter runs it","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[39,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"Stack","msg":"push frame for Main.square (depth 2)","det":[],"stage":4,"box":[{"t":"thread stack (top first)","l":["Main.square  locals=[2]  operands=[]","Main.main  locals=[String[0], Point@0x1000, 1, 2]  operands=[1]"]}],"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[40,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]},{"k":"Main.square","pc":null,"nat":false,"loc":[2],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=0   iload_0","det":["push local[0] = 2","operands=[2]  locals=[2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[41,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]},{"k":"Main.square","pc":0,"nat":false,"loc":[2],"ops":[2]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=1   iload_0","det":["push local[0] = 2","operands=[2, 2]  locals=[2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[42,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]},{"k":"Main.square","pc":1,"nat":false,"loc":[2],"ops":[2,2]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=2   imul","det":["pop 2 and 2, CPU computes 2 * 2 = 4, push it","operands=[4]  locals=[2]"],"stage":4,"alu":{"op":"*","a":2,"b":2,"r":4,"via":"interp","ins":"imul"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]},{"k":"Main.square","pc":2,"nat":false,"loc":[2],"ops":[4]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"Interpreter","msg":"Main.square pc=3   ireturn","det":["return 4"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]},{"k":"Main.square","pc":3,"nat":false,"loc":[2],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"Stack","msg":"pop frame for Main.square, control returns to Main.main","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"JIT","msg":"Main.square has been called 2 times -> it is HOT, compile it to machine code","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"JIT","msg":"translate bytecode -> machine code, keeping the operand stack in CPU registers","det":["method arguments arrive in registers: local[0] -> edi"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"JIT","msg":"iload_0    => mov eax, edi","det":[],"stage":4,"micro":true,"jitc":{"key":"Main.square","k":0,"asm":["mov eax, edi"],"vs":["eax"],"free":["r8d","r9d","r10d","r11d"]},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"JIT","msg":"iload_0    => mov r8d, edi","det":[],"stage":4,"micro":true,"jitc":{"key":"Main.square","k":1,"asm":["mov eax, edi","mov r8d, edi"],"vs":["eax","r8d"],"free":["r9d","r10d","r11d"]},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"JIT","msg":"imul       => imul eax, r8d","det":[],"stage":4,"micro":true,"jitc":{"key":"Main.square","k":2,"asm":["mov eax, edi","mov r8d, edi","imul eax, r8d"],"vs":["eax"],"free":["r8d","r9d","r10d","r11d"]},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"JIT","msg":"ireturn    => ret","det":[],"stage":4,"micro":true,"jitc":{"key":"Main.square","k":3,"asm":["mov eax, edi","mov r8d, edi","imul eax, r8d","ret"],"vs":[],"free":["r8d","r9d","r10d","r11d"]},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[43,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":[]}},{"who":"JIT","msg":"machine code for Main.square installed; next calls skip the interpreter","det":["Main.square returned 4, pushed it","operands=[1, 4]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[44,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[1,4]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=24  iadd","det":["pop 1 and 4, CPU computes 1 + 4 = 5, push it","operands=[5]  locals=[String[0], Point@0x1000, 1, 2]"],"stage":4,"alu":{"op":"+","a":1,"b":4,"r":5,"via":"interp","ins":"iadd"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[45,0],"proc":"running","fr":[{"k":"Main.main","pc":24,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},1,2],"ops":[5]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=25  istore_2","det":["pop 5 into local[2]","operands=[]  locals=[String[0], Point@0x1000, 5, 2]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[46,0],"proc":"running","fr":[{"k":"Main.main","pc":25,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,2],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=26  iinc 3 1","det":["local[3] += 1 -> 3","operands=[]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"alu":{"op":"+","a":2,"b":1,"r":3,"via":"interp","ins":"iinc"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[47,0],"proc":"running","fr":[{"k":"Main.main","pc":26,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=29  goto 14","det":["jump to pc 14","operands=[]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[48,0],"proc":"running","fr":[{"k":"Main.main","pc":29,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=14  iload_3","det":["push local[3] = 3","operands=[3]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[49,0],"proc":"running","fr":[{"k":"Main.main","pc":14,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[3]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=15  iconst_3","det":["push constant 3","operands=[3, 3]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[50,0],"proc":"running","fr":[{"k":"Main.main","pc":15,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[3,3]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=16  if_icmpgt 32","det":["compare 3 gt 3: false -> continue","operands=[]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"alu":{"op":"gt","a":3,"b":3,"r":0,"via":"interp","ins":"if_icmpgt"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[51,0],"proc":"running","fr":[{"k":"Main.main","pc":16,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=19  iload_2","det":["push local[2] = 5","operands=[5]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[52,0],"proc":"running","fr":[{"k":"Main.main","pc":19,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=20  iload_3","det":["push local[3] = 3","operands=[5, 3]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,0],"proc":"running","fr":[{"k":"Main.main","pc":20,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5,3]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=21  invokestatic Main.square:(I)I","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":2},"jit":["Main.square"]}},{"who":"JVM","msg":"call #3 of Main.square: compiled version exists -> run on CPU directly","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Stack","msg":"push frame for Main.square (depth 2)","det":[],"stage":4,"box":[{"t":"thread stack (top first)","l":["Main.square [machine code, uses CPU registers]","Main.main  locals=[String[0], Point@0x1000, 5, 3]  operands=[5]"]}],"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":0,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]},{"k":"Main.square","pc":null,"nat":true,"loc":[],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"CPU","msg":"jumps straight into machine code for Main.square (edi=3)","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":0,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,0],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]},{"k":"Main.square","pc":null,"nat":true,"loc":[],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"CPU","msg":"mov eax, edi      ; eax = 3","det":[],"stage":4,"micro":true,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":3,"r8d":0,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,1],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]},{"k":"Main.square","pc":0,"nat":true,"loc":[],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"CPU","msg":"mov r8d, edi      ; r8d = 3","det":[],"stage":4,"micro":true,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":3,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,2],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]},{"k":"Main.square","pc":1,"nat":true,"loc":[],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"CPU","msg":"imul eax, r8d     ; eax = 9","det":[],"stage":4,"micro":true,"alu":{"op":"*","a":3,"b":3,"r":9,"via":"native","ins":"imul eax, r8d"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,3],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]},{"k":"Main.square","pc":2,"nat":true,"loc":[],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"CPU","msg":"ret               ; return value is in eax = 9","det":[],"stage":4,"micro":true,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[53,4],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5]},{"k":"Main.square","pc":3,"nat":true,"loc":[],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Stack","msg":"pop frame for Main.square, control returns to Main.main","det":["Main.square returned 9, pushed it","operands=[5, 9]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[54,4],"proc":"running","fr":[{"k":"Main.main","pc":21,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[5,9]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=24  iadd","det":["pop 5 and 9, CPU computes 5 + 9 = 14, push it","operands=[14]  locals=[String[0], Point@0x1000, 5, 3]"],"stage":4,"alu":{"op":"+","a":5,"b":9,"r":14,"via":"interp","ins":"iadd"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[55,4],"proc":"running","fr":[{"k":"Main.main","pc":24,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},5,3],"ops":[14]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=25  istore_2","det":["pop 14 into local[2]","operands=[]  locals=[String[0], Point@0x1000, 14, 3]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[56,4],"proc":"running","fr":[{"k":"Main.main","pc":25,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,3],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=26  iinc 3 1","det":["local[3] += 1 -> 4","operands=[]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"alu":{"op":"+","a":3,"b":1,"r":4,"via":"interp","ins":"iinc"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[57,4],"proc":"running","fr":[{"k":"Main.main","pc":26,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=29  goto 14","det":["jump to pc 14","operands=[]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[58,4],"proc":"running","fr":[{"k":"Main.main","pc":29,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=14  iload_3","det":["push local[3] = 4","operands=[4]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[59,4],"proc":"running","fr":[{"k":"Main.main","pc":14,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[4]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=15  iconst_3","det":["push constant 3","operands=[4, 3]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[60,4],"proc":"running","fr":[{"k":"Main.main","pc":15,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[4,3]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=16  if_icmpgt 32","det":["compare 4 gt 3: true -> jump to 32","operands=[]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"alu":{"op":"gt","a":4,"b":3,"r":1,"via":"interp","ins":"if_icmpgt"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[61,4],"proc":"running","fr":[{"k":"Main.main","pc":16,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=32  getstatic java/lang/System.out:Ljava/io/PrintStream;","det":["push System.out (the standard output stream)","operands=[System.out]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[62,4],"proc":"running","fr":[{"k":"Main.main","pc":32,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=35  iload_2","det":["push local[2] = 14","operands=[System.out, 14]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[63,4],"proc":"running","fr":[{"k":"Main.main","pc":35,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=36  aload_1","det":["push local[1] = Point@0x1000","operands=[System.out, 14, Point@0x1000]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[64,4],"proc":"running","fr":[{"k":"Main.main","pc":36,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14,{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=37  invokevirtual Point.sum:()I","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[64,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3},"jit":["Main.square"]}},{"who":"JVM","msg":"call #1 of Point.sum: not compiled -> the interpreter runs it","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[64,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Stack","msg":"push frame for Point.sum (depth 2)","det":[],"stage":4,"box":[{"t":"thread stack (top first)","l":["Point.sum  locals=[Point@0x1000]  operands=[]","Main.main  locals=[String[0], Point@0x1000, 14, 4]  operands=[System.out, 14]"]}],"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[65,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]},{"k":"Point.sum","pc":null,"nat":false,"loc":[{"r":4096,"c":"Point"}],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Point.sum pc=0   aload_0","det":["push local[0] = Point@0x1000","operands=[Point@0x1000]  locals=[Point@0x1000]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[66,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]},{"k":"Point.sum","pc":0,"nat":false,"loc":[{"r":4096,"c":"Point"}],"ops":[{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Point.sum pc=1   getfield Point.x:I","det":["Heap: read Point@0x1000.x -> 3","push Point@0x1000.x = 3","operands=[3]  locals=[Point@0x1000]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[67,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]},{"k":"Point.sum","pc":1,"nat":false,"loc":[{"r":4096,"c":"Point"}],"ops":[3]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Point.sum pc=4   aload_0","det":["push local[0] = Point@0x1000","operands=[3, Point@0x1000]  locals=[Point@0x1000]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[68,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]},{"k":"Point.sum","pc":4,"nat":false,"loc":[{"r":4096,"c":"Point"}],"ops":[3,{"r":4096,"c":"Point"}]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Point.sum pc=5   getfield Point.y:I","det":["Heap: read Point@0x1000.y -> 4","push Point@0x1000.y = 4","operands=[3, 4]  locals=[Point@0x1000]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[69,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]},{"k":"Point.sum","pc":5,"nat":false,"loc":[{"r":4096,"c":"Point"}],"ops":[3,4]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Point.sum pc=8   iadd","det":["pop 3 and 4, CPU computes 3 + 4 = 7, push it","operands=[7]  locals=[Point@0x1000]"],"stage":4,"alu":{"op":"+","a":3,"b":4,"r":7,"via":"interp","ins":"iadd"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[70,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]},{"k":"Point.sum","pc":8,"nat":false,"loc":[{"r":4096,"c":"Point"}],"ops":[7]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Point.sum pc=9   ireturn","det":["return 7"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[70,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14]},{"k":"Point.sum","pc":9,"nat":false,"loc":[{"r":4096,"c":"Point"}],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Stack","msg":"pop frame for Point.sum, control returns to Main.main","det":["Point.sum returned 7, pushed it","operands=[System.out, 14, 7]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[71,4],"proc":"running","fr":[{"k":"Main.main","pc":37,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},14,7]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=40  iadd","det":["pop 14 and 7, CPU computes 14 + 7 = 21, push it","operands=[System.out, 21]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"alu":{"op":"+","a":14,"b":7,"r":21,"via":"interp","ins":"iadd"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[72,4],"proc":"running","fr":[{"k":"Main.main","pc":40,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[{"o":"System.out"},21]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=41  invokevirtual java/io/PrintStream.println:(I)V","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[72,4],"proc":"running","fr":[{"k":"Main.main","pc":41,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"JVM","msg":"System.out.println(21) needs the screen -> ask the OS","det":[],"stage":4,"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[72,4],"proc":"running","fr":[{"k":"Main.main","pc":41,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"OS","msg":"system call write(fd=1 stdout, \"21\\n\") from PID 4242 -> sending to the Console","det":[],"stage":4,"sys":{"call":"write","arg":"21\n"},"s":{"con":"","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[72,4],"proc":"running","fr":[{"k":"Main.main","pc":41,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Console","msg":"screen shows: 21","det":["printed","operands=[]  locals=[String[0], Point@0x1000, 14, 4]"],"stage":4,"io":{"op":"write","text":"21\n"},"s":{"con":"21\n","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[73,4],"proc":"running","fr":[{"k":"Main.main","pc":41,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Interpreter","msg":"Main.main pc=44  return","det":["return (void)"],"stage":4,"s":{"con":"21\n","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[73,4],"proc":"running","fr":[{"k":"Main.main","pc":44,"nat":false,"loc":[{"o":"String[0]"},{"r":4096,"c":"Point"},14,4],"ops":[]}],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"Stack","msg":"pop frame for Main.main, control returns to the JVM launcher","det":[],"stage":4,"s":{"con":"21\n","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[73,4],"proc":"running","fr":[],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"JVM","msg":"main returned and no other threads are running -> shut down","det":[],"stage":5,"box":[{"t":"final heap","l":["0x1000: Point {x=3, y=4}"]}],"s":{"con":"21\n","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[73,4],"proc":"running","fr":[],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}},{"who":"OS","msg":"PID 4242 exited with status 0; its memory is freed and the CPU is given to other processes","det":[],"stage":5,"s":{"con":"21\n","disk":["Main.class.json","Point.class.json"],"reg":{"edi":3,"esi":0,"edx":0,"ecx":0,"eax":9,"r8d":3,"r9d":0,"r10d":0,"r11d":0},"cnt":[73,4],"proc":"terminated","fr":[],"heap":[{"a":4096,"c":"Point","f":{"x":3,"y":4}}],"cls":["Main","Point"],"calls":{"Main.main":1,"Point.<init>":1,"Main.square":3,"Point.sum":1},"jit":["Main.square"]}}]}</script>
+<script>
+(function () {
+  "use strict";
+  const T = JSON.parse(document.getElementById("trace").textContent);
+  const E = T.events;
+  const N = E.length;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---------------------------------------------------------------- vocab
+  const MODES = {
+    build:  ["javac (build time)", "--c-build"],
+    jvm:    ["JVM · user mode", "--c-jvm"],
+    jit:    ["JIT compiler", "--c-jit"],
+    native: ["machine code on CPU", "--c-native"],
+    kernel: ["OS kernel", "--c-kernel"],
+    io:     ["device I/O", "--c-io"],
+  };
+  const COMP_MODE = { javac: "build", JVM: "jvm", ClassLoader: "jvm", Interpreter: "jvm", Stack: "jvm", Heap: "jvm",
+    JIT: "jit", CPU: "native", OS: "kernel", Disk: "io", Console: "io", RAM: "jvm" };
+  const WHY = {
+    javac: "javac runs before the program does. It turns Java source into bytecode, a portable instruction set the JVM understands.",
+    Disk: "The disk keeps the .class files between runs. Programs never touch it directly. The OS reads and writes it for them.",
+    OS: "Programs can't use hardware themselves. They ask the kernel through system calls, and the kernel drives the devices.",
+    JVM: "The JVM is an ordinary program the OS started. It sets up memory and decides how each method gets run.",
+    ClassLoader: "Classes are loaded the first time they are needed: read from disk, checked for safety, linked into memory, then initialized.",
+    Interpreter: "The interpreter is a loop inside the JVM: fetch the next bytecode, decode it, carry it out. The CPU runs that loop.",
+    Stack: "Every method call gets a frame holding its local variables and operand stack. Returning throws the frame away.",
+    Heap: "Objects made with new live on the heap. Variables on the stack only hold references (addresses) to them.",
+    JIT: "The JIT counts calls. Once a method is hot, it translates its bytecode into native machine code so later calls skip the interpreter.",
+    CPU: "Machine code runs directly on the CPU. Values sit in registers instead of on the JVM's operand stack.",
+    Console: "The console is the screen device. Text reaches it only through the OS's write system call.",
+  };
+  const STAGE_NAMES = { 1: "Compile", 2: "OS starts the JVM", 3: "JVM boots", 4: "Load + execute", 5: "Exit" };
+  const OPC = { aload_0: 0x2a, aload_1: 0x2b, aload_2: 0x2c, aload_3: 0x2d, iload_0: 0x1a, iload_1: 0x1b, iload_2: 0x1c, iload_3: 0x1d,
+    istore_0: 0x3b, istore_1: 0x3c, istore_2: 0x3d, istore_3: 0x3e, astore_0: 0x4b, astore_1: 0x4c, astore_2: 0x4d, astore_3: 0x4e,
+    iload: 0x15, aload: 0x19, istore: 0x36, astore: 0x3a,
+    iconst_m1: 0x02, iconst_0: 0x03, iconst_1: 0x04, iconst_2: 0x05, iconst_3: 0x06, iconst_4: 0x07, iconst_5: 0x08,
+    bipush: 0x10, sipush: 0x11, ldc: 0x12, iadd: 0x60, isub: 0x64, imul: 0x68, idiv: 0x6c, irem: 0x70, ineg: 0x74, iinc: 0x84,
+    ifeq: 0x99, ifne: 0x9a, if_icmpeq: 0x9f, if_icmpne: 0xa0, if_icmplt: 0xa1, if_icmpge: 0xa2, if_icmpgt: 0xa3, if_icmple: 0xa4,
+    if_acmpeq: 0xa5, if_acmpne: 0xa6, goto: 0xa7, ireturn: 0xac, areturn: 0xb0, return: 0xb1,
+    getstatic: 0xb2, putstatic: 0xb3, getfield: 0xb4, putfield: 0xb5, invokevirtual: 0xb6, invokespecial: 0xb7, invokestatic: 0xb8,
+    new: 0xbb, dup: 0x59, pop: 0x57 };
+  const hex = (n) => n.toString(16).padStart(2, "0");
+
+  // x86-64 encoder for the few instructions the mini JIT emits
+  const REGNUM = { eax: 0, ecx: 1, edx: 2, ebx: 3, esp: 4, ebp: 5, esi: 6, edi: 7, r8d: 8, r9d: 9, r10d: 10, r11d: 11 };
+  function encodeX86(text) {
+    const m = text.replace(",", "").split(/\s+/);
+    const op = m[0];
+    if (op === "ret") return [0xc3];
+    const d = REGNUM[m[1]];
+    const sv = m[2];
+    const rex = (r, b) => (r > 7 || b > 7 ? [0x40 | ((r > 7) << 2) | (b > 7)] : []);
+    const modrm = (reg, rm) => 0xc0 | ((reg & 7) << 3) | (rm & 7);
+    if (op === "neg") return [...rex(0, d), 0xf7, modrm(3, d)];
+    if (op === "mov" && !(sv in REGNUM)) {
+      const v = parseInt(sv, 10) >>> 0;
+      return [...rex(0, d), 0xb8 + (d & 7), v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255];
+    }
+    const s = REGNUM[sv];
+    if (op === "mov") return [...rex(s, d), 0x89, modrm(s, d)];
+    if (op === "add") return [...rex(s, d), 0x01, modrm(s, d)];
+    if (op === "sub") return [...rex(s, d), 0x29, modrm(s, d)];
+    if (op === "imul") return [...rex(d, s), 0x0f, 0xaf, modrm(d, s)];
+    return [];
+  }
+
+  // ---------------------------------------------------------------- precompute
+  function modeOf(e) {
+    if (e.who === "Disk" || e.who === "Console") return "io";
+    if (e.stage === 1) return "build";
+    return COMP_MODE[e.who] || "jvm";
+  }
+  const methods = {};
+  for (const [cn, cf] of Object.entries(T.classes)) {
+    for (const m of cf.methods) methods[cn + "." + m.name] = Object.assign({ cls: cn }, m);
+  }
+  // carry-forward facts
+  const carry = [];
+  let lastAlu = null, lastSys = null, lastJitc = null, lastIO = null, lastView = T.main + ".main";
+  E.forEach((e, i) => {
+    if (e.alu) lastAlu = { i, ...e.alu };
+    if (e.sys) lastSys = { i, ...e.sys };
+    if (e.jitc) lastJitc = { i, ...e.jitc };
+    if (e.io) lastIO = { i, who: e.who, ...e.io };
+    const fr = (e.s && e.s.fr) || [];
+    if (fr.length) lastView = fr[fr.length - 1].k;
+    carry.push({ alu: lastAlu, sys: lastSys, jitc: lastJitc, io: lastIO, view: lastView });
+  });
+
+  // ---------------------------------------------------------------- static UI
+  $("fileName").textContent = T.file;
+  $("chips").innerHTML = [`${N} recorded steps`, `JIT threshold: ${T.threshold} calls`, `output: ${T.output.trim()}`]
+    .map((c) => `<span class="chip">${esc(c)}</span>`).join("");
+  $("stepTot").textContent = N;
+  $("scrub").max = N - 1;
+  $("legend").innerHTML = Object.entries(MODES).map(([k, v]) => `<span><i class="m-${k}"></i>${v[0]}</span>`).join("");
+  $("thr").textContent = `(a method gets compiled after ${T.threshold} calls)`;
+
+  // stage track
+  const stageStart = {}, stageCount = {};
+  E.forEach((e, i) => { if (!(e.stage in stageStart)) stageStart[e.stage] = i; stageCount[e.stage] = (stageCount[e.stage] || 0) + 1; });
+  $("stageTrack").innerHTML = Object.keys(stageStart).map((s) =>
+    `<button type="button" data-s="${s}" style="flex:${Math.max(stageCount[s], 6)}" title="Stage ${s}: ${STAGE_NAMES[s] || ""}">${s} ${STAGE_NAMES[s] || ""}</button>`).join("");
+  $("stageTrack").addEventListener("click", (ev) => { const b = ev.target.closest("button"); if (b) go(stageStart[b.dataset.s], true); });
+
+  // mode track
+  $("modeTrack").innerHTML = E.map((e) => `<i class="m-${modeOf(e)}"></i>`).join("");
+  $("modeTrack").addEventListener("click", (ev) => {
+    const r = ev.currentTarget.getBoundingClientRect();
+    go(Math.min(N - 1, Math.max(0, Math.floor(((ev.clientX - r.left) / r.width) * N))), true);
+  });
+  const modeCells = Array.from($("modeTrack").children);
+
+  // java source with light highlighting
+  const KW = /\b(public|static|class|int|boolean|void|return|new|for|while|if|else|this|true|false|private)\b/g;
+  function hiJava(line) {
+    let h = esc(line);
+    h = h.replace(/(&quot;.*?&quot;)/g, '<span class="s">$1</span>');
+    h = h.replace(KW, '<span class="k">$1</span>');
+    h = h.replace(/\b([A-Z][A-Za-z0-9_]*)\b/g, '<span class="t">$1</span>');
+    h = h.replace(/(?<![\w#])(\d+)\b/g, '<span class="n">$1</span>');
+    return h;
+  }
+  const srcLines = T.source.replace(/\n$/, "").split("\n");
+  $("src").innerHTML = srcLines.map((l, i) => `<div data-l="${i + 1}"><b>${i + 1}</b><span>${hiJava(l) || " "}</span></div>`).join("");
+  const srcRows = Array.from($("src").children);
+
+  // event log
+  $("logList").innerHTML = E.map((e, i) => {
+    const c = MODES[modeOf(e)][1];
+    return `<li data-i="${i}" class="${e.micro ? "micro" : ""}" style="--c:var(${c})"><span class="n">${i + 1}</span><span class="w">${esc(e.who)}</span><span class="m">${esc(e.msg)}</span></li>`;
+  }).join("");
+  const logRows = Array.from($("logList").children);
+  $("logList").addEventListener("click", (ev) => { const li = ev.target.closest("li"); if (li) go(+li.dataset.i, true); });
+
+  // ---------------------------------------------------------------- system map
+  const NODES = {
+    javac: [75, 67, 110, "javac", "build time"],
+    JVM: [230, 67, 100, "JVM", "runtime"],
+    ClassLoader: [352, 67, 120, "ClassLoader", "load · verify · link"],
+    Interpreter: [482, 67, 116, "Interpreter", "bytecode loop"],
+    JIT: [604, 67, 104, "JIT", "hot code → native"],
+    Stack: [742, 67, 100, "Stack", "frames"],
+    Heap: [868, 67, 100, "Heap", "objects"],
+    OS: [300, 165, 170, "OS kernel", "syscalls · scheduler"],
+    Disk: [110, 235, 110, "Disk", "class files"],
+    Console: [300, 235, 110, "Console", "screen"],
+    CPU: [520, 235, 130, "CPU", "registers · ALU"],
+    RAM: [805, 235, 180, "RAM", "physical memory"],
+  };
+  const EDGES = {
+    "javac|Disk": "M90 90V212", "JVM|OS": "M240 90V142", "ClassLoader|OS": "M352 90V142",
+    "OS|Disk": "M215 165H110V212", "OS|Console": "M300 188V212", "OS|CPU": "M385 176H468V212",
+    "Interpreter|CPU": "M492 90V212", "JIT|CPU": "M604 90V150H560V212", "Stack|RAM": "M742 90V212",
+    "Heap|RAM": "M868 90V212", "CPU|RAM": "M585 235H715", "JVM|ClassLoader": "M280 67H292",
+    "ClassLoader|Interpreter": "M412 67H424", "Interpreter|JIT": "M540 67H552", "JIT|Stack": "M656 67H692",
+    "Stack|Heap": "M792 67H818", "JVM|Stack": "M220 44V32H732V44", "Interpreter|Stack": "M470 44V32H732V44",
+    "Interpreter|Heap": "M500 44V38H858V44", "ClassLoader|Heap": "M352 44V38H858V44", "JVM|Heap": "M240 44V38H858V44",
+  };
+  const HIDDEN = { "Disk|ClassLoader": "M110 212V165H352V90" };
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const map = $("map");
+  let svg = `<rect class="zone" x="160" y="18" width="776" height="96" rx="8"/>
+    <text class="zlabel" x="928" y="108" text-anchor="end">java process · user space</text>
+    <text class="zlabel" x="396" y="170">kernel space</text>
+    <text class="zlabel" x="992" y="266" text-anchor="end">hardware</text>`;
+  const pathEls = {};
+  for (const [k, d] of Object.entries(EDGES)) svg += `<path class="trace" data-e="${k}" d="${d}"/>`;
+  for (const [k, d] of Object.entries(HIDDEN)) svg += `<path data-e="${k}" d="${d}" fill="none" stroke="none"/>`;
+  // vias at trace ends
+  const vias = new Set();
+  for (const d of Object.values(EDGES)) {
+    const nums = d.match(/[MHV][\d.]+(?:\s[\d.]+)?/g);
+    let x = 0, y = 0; const pts = [];
+    nums.forEach((t) => {
+      const c = t[0], v = t.slice(1).split(/\s/).map(Number);
+      if (c === "M") { x = v[0]; y = v[1]; } else if (c === "H") x = v[0]; else y = v[0];
+      pts.push([x, y]);
+    });
+    vias.add(pts[0].join(",")); vias.add(pts[pts.length - 1].join(","));
+  }
+  vias.forEach((p) => { const [x, y] = p.split(","); svg += `<circle class="via" cx="${x}" cy="${y}" r="3.2"/>`; });
+  for (const [k, [cx, cy, w, nm, ns]] of Object.entries(NODES)) {
+    const h = 46, x = cx - w / 2, y = cy - h / 2;
+    svg += `<g class="node" data-n="${k}" style="--c:var(${MODES[COMP_MODE[k]][1]})" tabindex="0" role="button" aria-label="${nm}: jump to its next step">
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6"/>
+      <rect class="pin" x="${x + 6}" y="${y + 7}" width="4" height="${h - 14}" rx="1" style="stroke:none"/>
+      <text class="nm" x="${x + 16}" y="${y + 20}">${nm}</text>
+      <text class="ns" x="${x + 16}" y="${y + 35}" data-sub="${k}">${ns}</text></g>`;
+  }
+  map.innerHTML = svg;
+  map.querySelectorAll("path[data-e]").forEach((p) => (pathEls[p.dataset.e] = p));
+  const nodeEls = {};
+  map.querySelectorAll(".node").forEach((g) => {
+    nodeEls[g.dataset.n] = g;
+    const jump = () => {
+      const who = g.dataset.n === "RAM" ? ["Stack", "Heap"] : [g.dataset.n];
+      for (let k = 1; k <= N; k++) { const j = (cur + k) % N; if (who.includes(E[j].who)) { go(j, true); return; } }
+    };
+    g.addEventListener("click", jump);
+    g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); jump(); } });
+  });
+
+  function findEdge(a, b) {
+    if (EDGES[a + "|" + b] || HIDDEN[a + "|" + b]) return [a + "|" + b, false];
+    if (EDGES[b + "|" + a] || HIDDEN[b + "|" + a]) return [b + "|" + a, true];
+    return null;
+  }
+  function pulse(a, b) {
+    const f = findEdge(a, b);
+    if (!f) return null;
+    const [key, rev] = f;
+    if (reduceMotion) return key;
+    const p = pathEls[key];
+    const len = p.getTotalLength();
+    const dot = document.createElementNS(SVGNS, "circle");
+    dot.setAttribute("r", "5"); dot.setAttribute("class", "pulse");
+    map.appendChild(dot);
+    const dur = Math.max(260, 620 / speed());
+    const t0 = performance.now();
+    (function tick(now) {
+      const t = Math.min(1, (now - t0) / dur);
+      const e = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const pt = p.getPointAtLength((rev ? 1 - e : e) * len);
+      dot.setAttribute("cx", pt.x); dot.setAttribute("cy", pt.y);
+      if (t < 1) requestAnimationFrame(tick); else dot.remove();
+    })(t0);
+    return key;
+  }
+
+  // ---------------------------------------------------------------- values
+  function val(v, cls) {
+    if (v === null || v === undefined) return `<span class="opq">–</span>`;
+    if (typeof v === "number") return String(v);
+    if ("r" in v) return `<span class="ref" data-ref="${v.r}">→${esc(v.c)}@0x${v.r.toString(16)}</span>`;
+    if ("s" in v) return `<span class="str">"${esc(v.s)}"</span>`;
+    return `<span class="opq">${esc(v.o)}</span>`;
+  }
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  // ---------------------------------------------------------------- render
+  let cur = 0, last = -1;
+
+  function render(i, animate) {
+    const e = E[i], s = e.s || {}, c = carry[i];
+    const prev = i > 0 ? E[i - 1].s || {} : {};
+    const fwd = animate && i === last + 1;
+    const mode = modeOf(e);
+    const mc = MODES[mode][1];
+
+    // transport
+    $("stepNo").textContent = i + 1;
+    $("scrub").value = i;
+    $("stageTrack").querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.s === e.stage));
+    modeCells.forEach((el, k) => { el.classList.toggle("past", k <= i); el.classList.toggle("cur", k === i); });
+
+    // now
+    $("nowStage").textContent = `stage ${e.stage} · ${STAGE_NAMES[e.stage] || ""}`;
+    $("nowCard").style.setProperty("--c", `var(${mc})`);
+    $("nowWho").innerHTML = `<span class="badge">${esc(e.who)}</span><span class="modepill">${MODES[mode][0]}${e.micro ? " · sub-step" : ""}</span>`;
+    $("nowMsg").innerHTML = esc(e.msg).replace(/`([^`]+)`/g, "<code>$1</code>");
+    $("nowDet").innerHTML = (e.det || []).map((d) => `<li>${esc(d)}</li>`).join("");
+    $("nowWhy").textContent = WHY[e.who] || "";
+
+    renderMap(i, e, fwd);
+    renderCode(i, e, s, c);
+    renderMem(i, e, s, prev, fwd);
+    renderCpu(i, e, s, c, prev, mode, fwd);
+    renderJit(i, e, s, c);
+    renderOs(i, e, s, c, fwd);
+    renderLog(i);
+    last = i;
+  }
+
+  function renderMap(i, e, fwd) {
+    const on = e.who;
+    const assist = new Set();
+    if (on === "Interpreter") {
+      assist.add("CPU"); assist.add("Stack");
+      if (/new|getfield|putfield/.test(e.msg)) assist.add("Heap");
+    }
+    if (on === "Stack" || on === "Heap") assist.add("RAM");
+    if (on === "CPU") assist.add("RAM");
+    for (const [k, g] of Object.entries(nodeEls)) {
+      g.classList.toggle("on", k === on);
+      g.classList.toggle("assist", k !== on && assist.has(k));
+    }
+    const hot = new Set();
+    if (i > 0) {
+      const a = E[i - 1].who;
+      if (a !== on) {
+        const k = fwd ? pulse(a, on) : (findEdge(a, on) || [null])[0];
+        if (k) hot.add(k);
+      }
+    }
+    if (on === "Interpreter" && e.alu) { const k = fwd ? pulse("Interpreter", "CPU") : "Interpreter|CPU"; if (k) hot.add(k); }
+    if (on === "Interpreter" && /getfield|putfield/.test(e.msg)) { const k = fwd ? pulse("Interpreter", "Heap") : "Interpreter|Heap"; if (k) hot.add(k); }
+    map.querySelectorAll(".trace").forEach((p) => p.classList.toggle("hot", hot.has(p.dataset.e)));
+    // live sub-labels
+    const s = e.s || {};
+    const sub = (k, t) => { const el = map.querySelector(`[data-sub="${k}"]`); if (el) el.textContent = t; };
+    sub("OS", s.proc ? `PID ${T.pid} · ${s.proc}` : "syscalls · scheduler");
+    sub("Disk", s.disk && s.disk.length ? `${s.disk.length} class file${s.disk.length > 1 ? "s" : ""}` : "class files");
+    sub("Stack", s.fr ? `${s.fr.length} frame${s.fr.length === 1 ? "" : "s"}` : "frames");
+    sub("Heap", s.heap ? `${s.heap.length} object${s.heap.length === 1 ? "" : "s"}` : "objects");
+    sub("JIT", s.jit && s.jit.length ? `${s.jit.length} compiled` : "hot code → native");
+    sub("Console", s.con ? `shows ${s.con.trim()}` : "screen");
+  }
+
+  const bcCache = {};
+  function bcTable(key) {
+    if (bcCache[key]) return bcCache[key];
+    const m = methods[key];
+    const rows = m.code.map((ins) => {
+      const a = ins.arg === undefined ? "" : String(ins.arg);
+      const code = OPC[ins.op] !== undefined ? hex(OPC[ins.op]) : "··";
+      return `<tr data-pc="${ins.pc}"><td class="pc">${ins.pc}</td><td class="hex">${code}</td><td class="op">${esc(ins.op)}</td><td class="arg">${esc(a)}</td><td class="ln">${ins.line ? "L" + ins.line : ""}</td></tr>`;
+    }).join("");
+    bcCache[key] = `<table>${rows}</table>`;
+    return bcCache[key];
+  }
+  let bcShown = null;
+  function renderCode(i, e, s, c) {
+    const fr = s.fr || [];
+    const top = fr[fr.length - 1];
+    let key = top ? top.k : c.view;
+    if (e.who === "JIT" && c.jitc) key = c.jitc.key;
+    if (!methods[key]) key = T.main + ".main";
+    const m = methods[key];
+    if (bcShown !== key) { $("bc").innerHTML = bcTable(key); bcShown = key; }
+    const native = top && top.nat && top.k === key;
+    $("bcTitle").innerHTML = `Bytecode · ${esc(key)} ${native ? '<span class="tag" style="--c:var(--c-native)">running as machine code</span>' : ""}`;
+    $("bcMeta").textContent = `${m.descriptor} · stack ${m.max_stack} · locals ${m.max_locals}`;
+    $("bc").classList.toggle("dim", !!native);
+    let line = 0;
+    $("bc").querySelectorAll("tr").forEach((tr) => {
+      const on = top && !top.nat && top.k === key && +tr.dataset.pc === top.pc;
+      tr.classList.toggle("cur", !!on);
+      if (on) { const ins = m.code.find((x) => x.pc === top.pc); line = ins && ins.line; scrollInto($("bc"), tr); }
+    });
+    if (native) line = (m.code[0] || {}).line;
+    srcRows.forEach((r) => {
+      const on = +r.dataset.l === line;
+      r.classList.toggle("cur", on);
+      r.classList.toggle("native", on && !!native);
+      if (on) scrollInto($("src"), r);
+    });
+  }
+
+  function scrollInto(box, el) {
+    const top = el.offsetTop - box.offsetTop;
+    if (top < box.scrollTop + 8 || top + el.offsetHeight > box.scrollTop + box.clientHeight - 8) {
+      box.scrollTop = Math.max(0, top - box.clientHeight / 2);
+    }
+  }
+
+  function renderMem(i, e, s, prev, fwd) {
+    const fr = s.fr || [], pf = prev.fr || [];
+    $("stackMeta").textContent = fr.length ? `${fr.length} frame${fr.length > 1 ? "s" : ""}` : "";
+    if (!fr.length) {
+      $("frames").innerHTML = `<div class="emptynote">${e.stage < 4 ? "No Java code running yet. main's frame appears when the JVM calls it." : "The stack is empty. main has returned."}</div>`;
+    } else {
+      const html = [];
+      for (let k = fr.length - 1; k >= 0; k--) {
+        const f = fr[k], p = pf[k] && pf[k].k === f.k ? pf[k] : null;
+        const isTop = k === fr.length - 1;
+        const enter = fwd && !p && isTop;
+        let body;
+        if (f.nat) {
+          body = `<div class="opempty">compiled code · its values are in CPU registers (edi, eax, r8d)</div>`;
+        } else {
+          const loc = f.loc.map((v, j) => {
+            const ch = fwd && p && !same(p.loc[j], v) ? " chg" : "";
+            return `<span class="slot${v === null ? " empty" : ""}${ch}"><i>${j}</i><b>${val(v)}</b></span>`;
+          }).join("") || `<span class="opempty">no locals</span>`;
+          const ops = f.ops.length
+            ? f.ops.map((v, j) => {
+                const ch = fwd && p && (j >= p.ops.length || !same(p.ops[j], v)) ? " chg" : "";
+                return `<span class="opv${j === f.ops.length - 1 ? " topv" : ""}${ch}">${val(v)}</span>`;
+              }).join("")
+            : `<span class="opempty">empty</span>`;
+          body = `<div class="slots">${loc}</div><div class="opstack"><span class="lbl">operand stack →</span>${ops}</div>`;
+        }
+        html.push(`<div class="frame${isTop ? " top" : ""}${f.nat ? " native" : ""}${enter ? " enter" : ""}">
+          <div class="fhead">${esc(f.k)}<span>${f.nat ? "native" : "pc " + f.pc}</span></div>${body}</div>`);
+      }
+      $("frames").innerHTML = html.join("");
+    }
+    const heap = s.heap || [], ph = prev.heap || [];
+    const used = heap.reduce((a, o) => a + 8 + 4 * Object.keys(o.f).length, 0);
+    $("heapMeta").textContent = s.heap ? `${used} bytes used · 64 MB reserved` : "";
+    if (!heap.length) {
+      $("heap").innerHTML = `<div class="emptynote">${s.heap ? "No objects yet." : "The heap is created when the JVM boots."}</div>`;
+    } else {
+      $("heap").innerHTML = heap.map((o) => {
+        const p = ph.find((x) => x.a === o.a);
+        const isNew = fwd && !p;
+        const n = Object.keys(o.f).length;
+        const fields = Object.entries(o.f).map(([k, v], j) => {
+          const ch = fwd && p && !same(p.f[k], v) ? ' class="chg"' : "";
+          return `<span>+${8 + 4 * j}</span><b${ch}>${esc(k)} = ${val(v)}</b><em>int</em>`;
+        }).join("");
+        return `<div class="obj${isNew ? " new" : ""}" data-addr="${o.a}"><div class="oh"><b>${esc(o.c)}</b><span>0x${o.a.toString(16)} · ${8 + 4 * n} B</span></div>
+          <div class="of"><span>+0</span><em>object header</em><em>8 B</em>${fields}</div></div>`;
+      }).join("");
+    }
+    const cls = s.cls || [], pc = prev.cls || [];
+    $("mclasses").innerHTML = cls.length
+      ? cls.map((n) => `<span class="${fwd && !pc.includes(n) ? "chg" : ""}">${esc(n)}</span>`).join("")
+      : `<span style="border-style:dashed;color:var(--faint)">none loaded</span>`;
+    drawArrows();
+  }
+
+  function drawArrows() {
+    const box = $("memgrid"), svgA = $("arrows");
+    const br = box.getBoundingClientRect();
+    let out = "";
+    box.querySelectorAll("#frames [data-ref]").forEach((el) => {
+      const target = box.querySelector(`#heap [data-addr="${el.dataset.ref}"]`);
+      if (!target) return;
+      const a = el.getBoundingClientRect(), b = target.getBoundingClientRect();
+      let x1, y1, x2, y2, d;
+      if (b.left > a.right - 4) {
+        x1 = a.right - br.left; y1 = a.top + a.height / 2 - br.top;
+        x2 = b.left - br.left - 2; y2 = b.top + 14 - br.top;
+        const mx = (x1 + x2) / 2;
+        d = `M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`;
+      } else {
+        x1 = a.left + a.width / 2 - br.left; y1 = a.bottom - br.top;
+        x2 = b.left + 24 - br.left; y2 = b.top - br.top - 2;
+        const my = (y1 + y2) / 2;
+        d = `M${x1} ${y1}C${x1} ${my} ${x2} ${my} ${x2} ${y2}`;
+      }
+      out += `<path d="${d}"/><circle cx="${x2}" cy="${y2}" r="3"/>`;
+    });
+    svgA.innerHTML = out;
+  }
+
+  const ALU_SYM = { "+": "+", "-": "−", "*": "×", "/": "÷", "%": "mod", eq: "=", ne: "≠", lt: "<", le: "≤", gt: ">", ge: "≥" };
+  function renderCpu(i, e, s, c, prev, mode, fwd) {
+    const mc = MODES[mode][1];
+    const DESC = {
+      build: ["javac process", "the compiler is running; the JVM hasn't started yet"],
+      jvm: ["User mode", e.who === "Interpreter" ? "the CPU is running the JVM's interpreter loop" : "the CPU is running JVM code (" + e.who + ")"],
+      jit: ["User mode", "the CPU is running the JIT compiler"],
+      native: ["User mode", "the CPU is running JIT-compiled machine code directly"],
+      kernel: ["Kernel mode", "the CPU switched into the OS kernel"],
+      io: ["Waiting on I/O", `the ${e.who.toLowerCase()} device is doing the work`],
+    }[mode];
+    if (e.stage === 5 && e.who === "OS") DESC[1] = "the process is gone; the scheduler gives the CPU to other programs";
+    $("modebar").style.setProperty("--c", `var(${mc})`);
+    $("modebar").innerHTML = `<span class="led"></span><div><b>${DESC[0]}</b><br><span>${esc(DESC[1])}</span></div>`;
+
+    // ALU
+    const a = c.alu;
+    const live = !!e.alu;
+    if (a) {
+      const sym = ALU_SYM[a.op] || a.op;
+      const cmp = ["eq", "ne", "lt", "le", "gt", "ge"].includes(a.op);
+      const rhs = cmp ? (a.r ? "true" : "false") : a.r;
+      const via = a.via === "native" ? `machine code: ${a.ins}  [${encodeX86(a.ins).map(hex).join(" ")}]` : `interpreted bytecode: ${a.ins}`;
+      $("alu").className = "alu" + (live ? " live" : " stale");
+      $("alu").innerHTML = `<div class="chipname">ALU</div><div class="eq">${a.a} ${sym} ${a.b} = ${rhs}</div>
+        <div class="via">${esc(via)}${live ? "" : ` · step ${a.i + 1}`}</div>`;
+    } else {
+      $("alu").className = "alu stale";
+      $("alu").innerHTML = `<div class="chipname">ALU</div><div class="eq">idle</div><div class="via">no arithmetic yet</div>`;
+    }
+
+    // fetch / decode / execute
+    const fr = s.fr || [];
+    const top = fr[fr.length - 1];
+    const fde = $("fde");
+    if (e.who === "Interpreter" && top && !top.nat) {
+      const m = methods[top.k], ins = m && m.code.find((x) => x.pc === top.pc);
+      const op = ins ? ins.op : "?";
+      $("fdeTitle").textContent = "Interpreter loop (runs on the CPU)";
+      fde.className = "fde";
+      fde.innerHTML = `<div class="on"><b>Fetch</b><span>pc ${top.pc} → 0x${OPC[op] !== undefined ? hex(OPC[op]) : "??"}</span></div>
+        <div class="on"><b>Decode</b><span>${esc(op)}${ins && ins.arg !== undefined ? " " + esc(String(ins.arg)) : ""}</span></div>
+        <div class="on"><b>Execute</b><span title="${esc((e.det || [])[0] || "")}">${esc((e.det || [])[0] || "")}</span></div>`;
+    } else if (e.who === "CPU" && e.micro) {
+      const ins = e.msg.split(";")[0].trim();
+      $("fdeTitle").textContent = "CPU pipeline (machine code, no interpreter)";
+      fde.className = "fde native";
+      fde.innerHTML = `<div class="on"><b>Fetch</b><span>${encodeX86(ins).map(hex).join(" ")}</span></div>
+        <div class="on"><b>Decode</b><span>${esc(ins)}</span></div>
+        <div class="on"><b>Execute</b><span>${esc((e.msg.split(";")[1] || "").trim())}</span></div>`;
+    } else {
+      $("fdeTitle").textContent = "Interpreter loop";
+      fde.className = "fde";
+      fde.innerHTML = `<div><b>Fetch</b><span>–</span></div><div><b>Decode</b><span>–</span></div><div><b>Execute</b><span>–</span></div>`;
+    }
+
+    // registers
+    const reg = s.reg || {}, pr = prev.reg || {};
+    $("regs").innerHTML = Object.entries(reg).map(([k, v]) => {
+      const ch = fwd && pr[k] !== undefined && pr[k] !== v ? " chg" : "";
+      return `<div class="reg${v ? " used" : ""}${ch}"><i>${k}</i><b>${v}</b></div>`;
+    }).join("");
+    const vpc = top ? (top.nat ? "native" : top.pc) : "–";
+    const sp = top && !top.nat ? top.ops.length : "–";
+    const pvf = (prev.fr || []);
+    const ptop = pvf[pvf.length - 1];
+    const chpc = fwd && ptop && top && (ptop.pc !== top.pc || ptop.k !== top.k) ? " chg" : "";
+    $("vregs").innerHTML = `<div class="reg wide${chpc}"><i>method</i><b>${top ? esc(top.k) : "–"}</b></div>
+      <div class="reg${chpc}"><i>bpc</i><b>${vpc}</b></div>
+      <div class="reg"><i>sp</i><b>${sp}</b></div>
+      <div class="reg"><i>frames</i><b>${fr.length}</b></div>`;
+
+    const cnt = s.cnt || [0, 0];
+    $("counters").innerHTML = `<div class="counter" style="--c:var(--c-jvm)"><b>${cnt[0]}</b><span>bytecodes interpreted</span></div>
+      <div class="counter" style="--c:var(--c-native)"><b>${cnt[1]}</b><span>machine instructions run natively</span></div>`;
+  }
+
+  function renderJit(i, e, s, c) {
+    const calls = s.calls || {};
+    const compiled = s.jit || [];
+    const rows = Object.entries(calls).filter(([k]) => !k.endsWith("<clinit>"));
+    $("hot").innerHTML = rows.length ? rows.map(([k, n]) => {
+      const done = compiled.includes(k);
+      const isHot = n >= T.threshold;
+      const st = done ? "compiled" : isHot ? "hot" : "interpreted";
+      const pct = Math.min(100, (n / T.threshold) * 100);
+      return `<div class="hotrow"><span>${esc(k)} ×${n}</span><span class="bar"><i style="width:${pct}%"></i></span><span class="state ${done ? "done" : isHot ? "hotc" : ""}">${st}</span></div>`;
+    }).join("") : `<div class="emptynote">No methods have been called yet.</div>`;
+
+    const j = c.jitc;
+    const key = j ? j.key : null;
+    const fr = s.fr || [];
+    const top = fr[fr.length - 1];
+    let phase;
+    if (!j) phase = "waiting for a hot method";
+    else if (e.who === "JIT" && e.jitc) phase = "translating";
+    else if (top && top.nat) phase = "compiled code is running";
+    else if (compiled.includes(key)) phase = "installed";
+    else phase = "translating";
+    if (e.who === "JIT" && !e.jitc && /HOT/.test(e.msg)) phase = "method just got hot";
+    $("jitPhase").textContent = phase;
+    $("jitCard").classList.toggle("active-card", e.who === "JIT" || (top && !!top.nat));
+    $("jitCard").style.setProperty("--accent", e.who === "JIT" ? "var(--c-jit)" : "var(--c-native)");
+
+    if (!j) {
+      const hotNow = e.who === "JIT" ? E.slice(i).find((x) => x.jitc) : null;
+      $("xTitle").textContent = "Bytecode → machine code";
+      $("xlate").innerHTML = `<div class="emptynote" style="border:0">Nothing compiled yet. Methods start out interpreted, one bytecode at a time.<br>When a method reaches ${T.threshold} calls, its translation appears here.</div>`;
+      $("vstack").innerHTML = "";
+      return;
+    }
+    const m = methods[key];
+    const full = T.jit[key];
+    const translating = e.who === "JIT" && !!e.jitc;
+    const kNow = translating ? e.jitc.k : m.code.length - 1;
+    const asmSoFar = translating ? e.jitc.asm : full.asm;
+    const runIdx = top && top.nat && top.k === key ? top.pc : -1;
+    let html = `<table><tr><th>pc</th><th>bytecode</th><th></th><th>x86-64</th><th>bytes</th></tr>`;
+    m.code.forEach((ins, k) => {
+      const range = full.map[k] || [0, 0];
+      const asm = full.asm.slice(range[0], range[1]);
+      const pending = k > kNow;
+      const curRow = translating && k === kNow;
+      const running = runIdx >= range[0] && runIdx < range[1];
+      const lines = (asm.length ? asm : ["(no code)"]);
+      lines.forEach((a, li) => {
+        const visible = !pending && (asmSoFar.length > range[0] + li || !translating);
+        html += `<tr class="${pending ? "pending" : ""}${curRow ? " cur" : ""}${running && runIdx === range[0] + li ? " run" : ""}">
+          <td class="pc">${li === 0 ? ins.pc : ""}</td><td>${li === 0 ? esc(ins.op) : ""}</td><td class="arrow">${li === 0 ? "⇒" : ""}</td>
+          <td class="asm">${visible ? esc(a) : "·"}</td><td class="bytes">${visible && a !== "(no code)" ? encodeX86(a).map(hex).join(" ") : ""}</td></tr>`;
+      });
+    });
+    html += `</table>`;
+    $("xTitle").textContent = `${key}: bytecode → x86-64 machine code`;
+    $("xlate").innerHTML = html;
+    if (translating) {
+      const vs = e.jitc.vs.map((r) => `<span class="r">${r}</span>`).join("") || `<span class="f">empty</span>`;
+      $("vstack").innerHTML = `<span class="sub" style="margin-right:4px">operand stack lives in</span>${vs}<span class="sub" style="margin:0 4px 0 8px">free</span>${e.jitc.free.slice(0, 4).map((r) => `<span class="f">${r}</span>`).join("")}`;
+    } else if (runIdx >= 0) {
+      $("vstack").innerHTML = `<span class="sub">running on the CPU · instruction ${runIdx + 1} of ${full.asm.length}</span>`;
+    } else {
+      const total = full.asm.reduce((n, a) => n + encodeX86(a).length, 0);
+      $("vstack").innerHTML = `<span class="sub">${full.asm.length} instructions · ${total} bytes of machine code · later calls jump straight here</span>`;
+    }
+  }
+
+  function renderOs(i, e, s, c, fwd) {
+    const st = s.proc || (e.stage < 2 ? "not started" : "starting");
+    $("proc").innerHTML = `<span>PID ${T.pid} · <b>java ${esc(T.main)}</b></span><span class="state ${esc(st)}">${esc(st)}</span>`;
+    const maxLog = Math.max(...T.memory.map((m) => Math.log2(m[2])));
+    $("mmap").innerHTML = s.proc ? T.memory.map(([name, start, size]) =>
+      `<div class="mm"><span>${esc(name)}</span><span class="mono">0x${start.toString(16).padStart(8, "0")} · ${size / 1048576} MB</span>
+       <div class="bar"><i style="width:${(Math.log2(size) / maxLog) * 100}%"></i></div></div>`).join("")
+      : `<div class="emptynote">The process gets its memory map when the OS starts it in stage 2.</div>`;
+    const sy = c.sys;
+    if (sy) {
+      const arg = sy.call === "write" ? `1, ${JSON.stringify(sy.arg)}` : JSON.stringify(sy.arg);
+      $("syscall").className = "syscall" + (e.sys ? " live" : "");
+      $("syscall").innerHTML = `<span class="k">${sy.call}</span>(${esc(arg)})<br><span style="color:var(--muted)">${sy.call === "read" ? "the JVM asks the kernel for a file's bytes" : "the JVM asks the kernel to show text on the screen"} · step ${sy.i + 1}</span>`;
+    } else {
+      $("syscall").className = "syscall";
+      $("syscall").innerHTML = `<span style="color:var(--muted)">none yet</span>`;
+    }
+    const files = s.disk || [];
+    $("disk").innerHTML = files.length ? files.map((f) => {
+      const liveIO = e.who === "Disk" && e.io && e.io.file === f;
+      return `<div class="file${liveIO ? " live" : ""}"><span class="led"></span><span class="fn">${esc(f.replace(".json", ""))}</span><span class="io">${liveIO ? e.io.op + "ing" : ""}</span></div>`;
+    }).join("") : `<div class="emptynote">empty</div>`;
+    // terminal
+    let t = `<span class="p">$</span> javac ${esc(T.file)}\n`;
+    if (e.stage >= 2) t += `<span class="p">$</span> java ${esc(T.main)}\n`;
+    if (s.con) t += `<span class="out${e.who === "Console" ? " fresh" : ""}">${esc(s.con)}</span>`;
+    if (s.proc === "terminated") t += `<span class="p">$</span> `;
+    if (e.stage === 1 || s.proc === "terminated") t += `<span class="cursor"></span>`;
+    $("term").innerHTML = t;
+  }
+
+  function renderLog(i) {
+    logRows.forEach((r, k) => { r.classList.toggle("cur", k === i); r.classList.toggle("future", k > i); });
+    scrollInto($("log"), logRows[i]);
+  }
+
+  // ---------------------------------------------------------------- playback
+  let timer = null;
+  const speed = () => parseFloat($("speed").value) || 1;
+  function delayFor(i) {
+    const e = E[i];
+    let base = 900;
+    if (e.who === "Interpreter") base = 520;
+    if (e.micro) base = 650;
+    if (e.who === "Console" || (e.who === "JIT" && !e.jitc)) base = 1500;
+    return base / speed();
+  }
+  function go(i, user) {
+    cur = Math.max(0, Math.min(N - 1, i));
+    $("hint").hidden = true;
+    render(cur, !user || cur === last + 1);
+  }
+  function play() {
+    if (cur >= N - 1) go(0, true);
+    $("playLbl").textContent = "Pause";
+    $("playIcon").innerHTML = '<path d="M3 2h4v12H3zM9 2h4v12H9z"/>';
+    const tick = () => {
+      if (cur >= N - 1) { stop(); return; }
+      go(cur + 1, false);
+      timer = setTimeout(tick, delayFor(cur));
+    };
+    timer = setTimeout(tick, Math.min(400, delayFor(cur)));
+  }
+  function stop() {
+    clearTimeout(timer); timer = null;
+    $("playLbl").textContent = "Play";
+    $("playIcon").innerHTML = '<path d="M4 2l10 6-10 6z"/>';
+  }
+  $("bPlay").addEventListener("click", () => (timer ? stop() : play()));
+  $("bRestart").addEventListener("click", () => { stop(); go(0, true); play(); });
+  $("bPrev").addEventListener("click", () => { stop(); go(cur - 1, true); });
+  $("bNext").addEventListener("click", () => { stop(); go(cur + 1, false); });
+  $("scrub").addEventListener("input", (ev) => { stop(); go(+ev.target.value, true); });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.target.closest("input, select, textarea")) return;
+    if (ev.key === "ArrowRight") { stop(); go(cur + 1, false); ev.preventDefault(); }
+    else if (ev.key === "ArrowLeft") { stop(); go(cur - 1, true); ev.preventDefault(); }
+    else if (ev.key === " " && !ev.target.closest("button, [role=button]")) { timer ? stop() : play(); ev.preventDefault(); }
+    else if (ev.key === "Home") { stop(); go(0, true); }
+    else if (ev.key === "End") { stop(); go(N - 1, true); }
+  });
+  window.addEventListener("resize", () => drawArrows());
+
+  // open on the moment the JIT-compiled code multiplies on the CPU, so every panel is populated
+  let start = E.findIndex((e) => e.who === "CPU" && e.alu);
+  if (start < 0) start = 0;
+  cur = start;
+  render(cur, false);
+  $("hint").hidden = false;
+  $("hint").style.setProperty("--c-jit", "var(--c-jit)");
+  $("hint").textContent = "Paused at the moment the JIT-compiled square() multiplies 3 × 3 directly on the CPU. Press Run from start to watch the whole journey, or use ← → to step.";
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawArrows);
+})();
+</script>
+
+</body>
+</html>

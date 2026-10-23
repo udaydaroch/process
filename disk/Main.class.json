@@ -35,19 +35,23 @@
       "code": [
         {
           "pc": 0,
-          "op": "iload_0"
+          "op": "iload_0",
+          "line": 3
         },
         {
           "pc": 1,
-          "op": "iload_0"
+          "op": "iload_0",
+          "line": 3
         },
         {
           "pc": 2,
-          "op": "imul"
+          "op": "imul",
+          "line": 3
         },
         {
           "pc": 3,
-          "op": "ireturn"
+          "op": "ireturn",
+          "line": 3
         }
       ]
     },
@@ -61,119 +65,146 @@
         {
           "pc": 0,
           "op": "new",
-          "arg": "Point"
+          "arg": "Point",
+          "line": 7
         },
         {
           "pc": 3,
-          "op": "dup"
+          "op": "dup",
+          "line": 7
         },
         {
           "pc": 4,
-          "op": "iconst_3"
+          "op": "iconst_3",
+          "line": 7
         },
         {
           "pc": 5,
-          "op": "iconst_4"
+          "op": "iconst_4",
+          "line": 7
         },
         {
           "pc": 6,
           "op": "invokespecial",
-          "arg": "Point.<init>:(II)V"
+          "arg": "Point.<init>:(II)V",
+          "line": 7
         },
         {
           "pc": 9,
-          "op": "astore_1"
+          "op": "astore_1",
+          "line": 7
         },
         {
           "pc": 10,
-          "op": "iconst_0"
+          "op": "iconst_0",
+          "line": 8
         },
         {
           "pc": 11,
-          "op": "istore_2"
+          "op": "istore_2",
+          "line": 8
         },
         {
           "pc": 12,
-          "op": "iconst_1"
+          "op": "iconst_1",
+          "line": 9
         },
         {
           "pc": 13,
-          "op": "istore_3"
+          "op": "istore_3",
+          "line": 9
         },
         {
           "pc": 14,
-          "op": "iload_3"
+          "op": "iload_3",
+          "line": 9
         },
         {
           "pc": 15,
-          "op": "iconst_3"
+          "op": "iconst_3",
+          "line": 9
         },
         {
           "pc": 16,
           "op": "if_icmpgt",
-          "arg": 32
+          "arg": 32,
+          "line": 9
         },
         {
           "pc": 19,
-          "op": "iload_2"
+          "op": "iload_2",
+          "line": 10
         },
         {
           "pc": 20,
-          "op": "iload_3"
+          "op": "iload_3",
+          "line": 10
         },
         {
           "pc": 21,
           "op": "invokestatic",
-          "arg": "Main.square:(I)I"
+          "arg": "Main.square:(I)I",
+          "line": 10
         },
         {
           "pc": 24,
-          "op": "iadd"
+          "op": "iadd",
+          "line": 10
         },
         {
           "pc": 25,
-          "op": "istore_2"
+          "op": "istore_2",
+          "line": 10
         },
         {
           "pc": 26,
           "op": "iinc",
-          "arg": "3 1"
+          "arg": "3 1",
+          "line": 9
         },
         {
           "pc": 29,
           "op": "goto",
-          "arg": 14
+          "arg": 14,
+          "line": 9
         },
         {
           "pc": 32,
           "op": "getstatic",
-          "arg": "java/lang/System.out:Ljava/io/PrintStream;"
+          "arg": "java/lang/System.out:Ljava/io/PrintStream;",
+          "line": 12
         },
         {
           "pc": 35,
-          "op": "iload_2"
+          "op": "iload_2",
+          "line": 12
         },
         {
           "pc": 36,
-          "op": "aload_1"
+          "op": "aload_1",
+          "line": 12
         },
         {
           "pc": 37,
           "op": "invokevirtual",
-          "arg": "Point.sum:()I"
+          "arg": "Point.sum:()I",
+          "line": 12
         },
         {
           "pc": 40,
-          "op": "iadd"
+          "op": "iadd",
+          "line": 12
         },
         {
           "pc": 41,
           "op": "invokevirtual",
-          "arg": "java/io/PrintStream.println:(I)V"
+          "arg": "java/io/PrintStream.println:(I)V",
+          "line": 12
         },
         {
           "pc": 44,
-          "op": "return"
+          "op": "return",
+          "line": 12
         }
       ]
     }

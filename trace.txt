@@ -1,0 +1,427 @@
+
+==============================================================================
+ STAGE 1: COMPILE  (javac: Main.java -> bytecode)
+ This happens once, before the program is run.
+==============================================================================
+[001] javac       | read Main.java (28 lines)
+[002] javac       | lexer: split the text into 128 tokens: public class Main { static int square ( int n ) { ...
+[003] javac       | parser: built a syntax tree for 2 classes: Main, Point
+[004] javac       | code generator: Main -> 3 methods, 34 bytecode instructions
+                  |   +-- Main.class (javap -c) --------------------------------------------+
+                  |   | class Main extends java/lang/Object {                               |
+                  |   |                                                                     |
+                  |   |   <init>()V                                                         |
+                  |   |     Code: stack=1, locals=1                                         |
+                  |   |          0: aload_0                                                 |
+                  |   |          1: invokespecial java/lang/Object.<init>:()V               |
+                  |   |          4: return                                                  |
+                  |   |                                                                     |
+                  |   |   static square(I)I                                                 |
+                  |   |     Code: stack=2, locals=1                                         |
+                  |   |          0: iload_0                                                 |
+                  |   |          1: iload_0                                                 |
+                  |   |          2: imul                                                    |
+                  |   |          3: ireturn                                                 |
+                  |   |                                                                     |
+                  |   |   static main([Ljava/lang/String;)V                                 |
+                  |   |     Code: stack=4, locals=4                                         |
+                  |   |          0: new Point                                               |
+                  |   |          3: dup                                                     |
+                  |   |          4: iconst_3                                                |
+                  |   |          5: iconst_4                                                |
+                  |   |          6: invokespecial Point.<init>:(II)V                        |
+                  |   |          9: astore_1                                                |
+                  |   |         10: iconst_0                                                |
+                  |   |         11: istore_2                                                |
+                  |   |         12: iconst_1                                                |
+                  |   |         13: istore_3                                                |
+                  |   |         14: iload_3                                                 |
+                  |   |         15: iconst_3                                                |
+                  |   |         16: if_icmpgt 32                                            |
+                  |   |         19: iload_2                                                 |
+                  |   |         20: iload_3                                                 |
+                  |   |         21: invokestatic Main.square:(I)I                           |
+                  |   |         24: iadd                                                    |
+                  |   |         25: istore_2                                                |
+                  |   |         26: iinc 3 1                                                |
+                  |   |         29: goto 14                                                 |
+                  |   |         32: getstatic java/lang/System.out:Ljava/io/PrintStream;    |
+                  |   |         35: iload_2                                                 |
+                  |   |         36: aload_1                                                 |
+                  |   |         37: invokevirtual Point.sum:()I                             |
+                  |   |         40: iadd                                                    |
+                  |   |         41: invokevirtual java/io/PrintStream.println:(I)V          |
+                  |   |         44: return                                                  |
+                  |   | }                                                                   |
+                  |   +---------------------------------------------------------------------+
+[005] Disk        | wrote Main.class.json (3252 bytes) to storage
+[006] javac       | code generator: Point -> 2 methods, 15 bytecode instructions
+                  |   +-- Point.class (javap -c) --------------------------------+
+                  |   | class Point extends java/lang/Object {                   |
+                  |   |   I x;                                                   |
+                  |   |   I y;                                                   |
+                  |   |                                                          |
+                  |   |   <init>(II)V                                            |
+                  |   |     Code: stack=2, locals=3                              |
+                  |   |          0: aload_0                                      |
+                  |   |          1: invokespecial java/lang/Object.<init>:()V    |
+                  |   |          4: aload_0                                      |
+                  |   |          5: iload_1                                      |
+                  |   |          6: putfield Point.x:I                           |
+                  |   |          9: aload_0                                      |
+                  |   |         10: iload_2                                      |
+                  |   |         11: putfield Point.y:I                           |
+                  |   |         14: return                                       |
+                  |   |                                                          |
+                  |   |   sum()I                                                 |
+                  |   |     Code: stack=2, locals=1                              |
+                  |   |          0: aload_0                                      |
+                  |   |          1: getfield Point.x:I                           |
+                  |   |          4: aload_0                                      |
+                  |   |          5: getfield Point.y:I                           |
+                  |   |          8: iadd                                         |
+                  |   |          9: ireturn                                      |
+                  |   | }                                                        |
+                  |   +----------------------------------------------------------+
+[007] Disk        | wrote Point.class.json (1760 bytes) to storage
+
+==============================================================================
+ STAGE 2: OPERATING SYSTEM starts the JVM process
+ The user runs: java Main
+==============================================================================
+[008] OS          | user typed `java Main` in the terminal
+[009] OS          | found the `java` program on disk and created process PID 4242
+[010] OS          | gave the process its own virtual memory:
+                  |   +-- PID 4242 memory map ---------------------------------+
+                  |   | code (JVM program)   starts 0x000400000  size 16 MB    |
+                  |   | heap (objects)       starts 0x000001000  size 64 MB    |
+                  |   | stack (main thread)  starts 0x07ff00000  size 1 MB     |
+                  |   +--------------------------------------------------------+
+[011] OS          | scheduler put PID 4242 on CPU core 0 -> the JVM starts running
+
+==============================================================================
+ STAGE 3: JVM BOOTS
+ The JVM is just a program; now it builds its Heap, Stack and loaders.
+==============================================================================
+[012] JVM         | booting: setting up the runtime data areas
+                  |   Heap created at 0x1000 for objects
+                  |   Stack created for the main thread (one frame per running method)
+                  |   ClassLoader ready to fetch .class files
+                  |   Interpreter ready; JIT will compile a method after 2 calls
+
+==============================================================================
+ STAGE 4: CLASS LOADING + EXECUTION
+ Classes are loaded on demand. The interpreter runs bytecode; hot code gets JIT-compiled.
+==============================================================================
+[013] JVM         | looking for Main.main(String[] args)
+[014] ClassLoader | class Main is needed for the first time -> load it
+[015] OS          | system call read("Main.class.json") from PID 4242 -> asking the Disk
+[016] Disk        | read Main.class.json (3252 bytes) from storage into RAM
+[017] ClassLoader | verify Main: magic number 0xCAFEBABE OK, all jumps land on real instructions
+[018] ClassLoader | link Main: method table [<init>, square, main]
+[019] ClassLoader | initialize Main: nothing to run, class is ready
+[020] JVM         | calling Main.main
+[021] Stack       | push frame for Main.main (depth 1)
+                  |   +-- thread stack (top first) ------------------------------+
+                  |   | Main.main  locals=["String[0]", -, -, -]  operands=[]    |
+                  |   +----------------------------------------------------------+
+[022] Interpreter | Main.main pc=0   new Point
+[023] ClassLoader | class Point is needed for the first time -> load it
+[024] OS          | system call read("Point.class.json") from PID 4242 -> asking the Disk
+[025] Disk        | read Point.class.json (1760 bytes) from storage into RAM
+[026] ClassLoader | verify Point: magic number 0xCAFEBABE OK, all jumps land on real instructions
+[027] ClassLoader | link Point: method table [<init>, sum]
+[028] ClassLoader | initialize Point: nothing to run, class is ready
+[029] Heap        | allocated a Point object at address 0x1000 (x=0, y=0, defaults)
+                  |   push reference Point@0x1000
+                  |   operands=[Point@0x1000]  locals=["String[0]", -, -, -]
+[030] Interpreter | Main.main pc=3   dup
+                  |   duplicate Point@0x1000
+                  |   operands=[Point@0x1000, Point@0x1000]  locals=["String[0]", -, -, -]
+[031] Interpreter | Main.main pc=4   iconst_3
+                  |   push constant 3
+                  |   operands=[Point@0x1000, Point@0x1000, 3]  locals=["String[0]", -, -, -]
+[032] Interpreter | Main.main pc=5   iconst_4
+                  |   push constant 4
+                  |   operands=[Point@0x1000, Point@0x1000, 3, 4]  locals=["String[0]", -, -, -]
+[033] Interpreter | Main.main pc=6   invokespecial Point.<init>:(II)V
+[034] JVM         | call #1 of Point.<init>: not compiled -> the interpreter runs it
+[035] Stack       | push frame for Point.<init> (depth 2)
+                  |   +-- thread stack (top first) ------------------------------------------+
+                  |   | Point.<init>  locals=[Point@0x1000, 3, 4]  operands=[]               |
+                  |   | Main.main  locals=["String[0]", -, -, -]  operands=[Point@0x1000]    |
+                  |   +----------------------------------------------------------------------+
+[036] Interpreter | Point.<init> pc=0   aload_0
+                  |   push local[0] = Point@0x1000
+                  |   operands=[Point@0x1000]  locals=[Point@0x1000, 3, 4]
+[037] Interpreter | Point.<init> pc=1   invokespecial java/lang/Object.<init>:()V
+                  |   Object.<init> for Point@0x1000: nothing to do
+                  |   operands=[]  locals=[Point@0x1000, 3, 4]
+[038] Interpreter | Point.<init> pc=4   aload_0
+                  |   push local[0] = Point@0x1000
+                  |   operands=[Point@0x1000]  locals=[Point@0x1000, 3, 4]
+[039] Interpreter | Point.<init> pc=5   iload_1
+                  |   push local[1] = 3
+                  |   operands=[Point@0x1000, 3]  locals=[Point@0x1000, 3, 4]
+[040] Interpreter | Point.<init> pc=6   putfield Point.x:I
+[041] Heap        | Point@0x1000.x = 3
+                  |   stored 3 into Point@0x1000.x
+                  |   operands=[]  locals=[Point@0x1000, 3, 4]
+[042] Interpreter | Point.<init> pc=9   aload_0
+                  |   push local[0] = Point@0x1000
+                  |   operands=[Point@0x1000]  locals=[Point@0x1000, 3, 4]
+[043] Interpreter | Point.<init> pc=10  iload_2
+                  |   push local[2] = 4
+                  |   operands=[Point@0x1000, 4]  locals=[Point@0x1000, 3, 4]
+[044] Interpreter | Point.<init> pc=11  putfield Point.y:I
+[045] Heap        | Point@0x1000.y = 4
+                  |   stored 4 into Point@0x1000.y
+                  |   operands=[]  locals=[Point@0x1000, 3, 4]
+[046] Interpreter | Point.<init> pc=14  return
+                  |   return (void)
+[047] Stack       | pop frame for Point.<init>, control returns to Main.main
+                  |   Point.<init> finished
+                  |   operands=[Point@0x1000]  locals=["String[0]", -, -, -]
+[048] Interpreter | Main.main pc=9   astore_1
+                  |   pop Point@0x1000 into local[1]
+                  |   operands=[]  locals=["String[0]", Point@0x1000, -, -]
+[049] Interpreter | Main.main pc=10  iconst_0
+                  |   push constant 0
+                  |   operands=[0]  locals=["String[0]", Point@0x1000, -, -]
+[050] Interpreter | Main.main pc=11  istore_2
+                  |   pop 0 into local[2]
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 0, -]
+[051] Interpreter | Main.main pc=12  iconst_1
+                  |   push constant 1
+                  |   operands=[1]  locals=["String[0]", Point@0x1000, 0, -]
+[052] Interpreter | Main.main pc=13  istore_3
+                  |   pop 1 into local[3]
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 0, 1]
+[053] Interpreter | Main.main pc=14  iload_3
+                  |   push local[3] = 1
+                  |   operands=[1]  locals=["String[0]", Point@0x1000, 0, 1]
+[054] Interpreter | Main.main pc=15  iconst_3
+                  |   push constant 3
+                  |   operands=[1, 3]  locals=["String[0]", Point@0x1000, 0, 1]
+[055] Interpreter | Main.main pc=16  if_icmpgt 32
+                  |   compare 1 gt 3: false -> continue
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 0, 1]
+[056] Interpreter | Main.main pc=19  iload_2
+                  |   push local[2] = 0
+                  |   operands=[0]  locals=["String[0]", Point@0x1000, 0, 1]
+[057] Interpreter | Main.main pc=20  iload_3
+                  |   push local[3] = 1
+                  |   operands=[0, 1]  locals=["String[0]", Point@0x1000, 0, 1]
+[058] Interpreter | Main.main pc=21  invokestatic Main.square:(I)I
+[059] JVM         | call #1 of Main.square: not compiled -> the interpreter runs it
+[060] Stack       | push frame for Main.square (depth 2)
+                  |   +-- thread stack (top first) ------------------------------------------+
+                  |   | Main.square  locals=[1]  operands=[]                                 |
+                  |   | Main.main  locals=["String[0]", Point@0x1000, 0, 1]  operands=[0]    |
+                  |   +----------------------------------------------------------------------+
+[061] Interpreter | Main.square pc=0   iload_0
+                  |   push local[0] = 1
+                  |   operands=[1]  locals=[1]
+[062] Interpreter | Main.square pc=1   iload_0
+                  |   push local[0] = 1
+                  |   operands=[1, 1]  locals=[1]
+[063] Interpreter | Main.square pc=2   imul
+                  |   pop 1 and 1, CPU computes 1 * 1 = 1, push it
+                  |   operands=[1]  locals=[1]
+[064] Interpreter | Main.square pc=3   ireturn
+                  |   return 1
+[065] Stack       | pop frame for Main.square, control returns to Main.main
+                  |   Main.square returned 1, pushed it
+                  |   operands=[0, 1]  locals=["String[0]", Point@0x1000, 0, 1]
+[066] Interpreter | Main.main pc=24  iadd
+                  |   pop 0 and 1, CPU computes 0 + 1 = 1, push it
+                  |   operands=[1]  locals=["String[0]", Point@0x1000, 0, 1]
+[067] Interpreter | Main.main pc=25  istore_2
+                  |   pop 1 into local[2]
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 1, 1]
+[068] Interpreter | Main.main pc=26  iinc 3 1
+                  |   local[3] += 1 -> 2
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 1, 2]
+[069] Interpreter | Main.main pc=29  goto 14
+                  |   jump to pc 14
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 1, 2]
+[070] Interpreter | Main.main pc=14  iload_3
+                  |   push local[3] = 2
+                  |   operands=[2]  locals=["String[0]", Point@0x1000, 1, 2]
+[071] Interpreter | Main.main pc=15  iconst_3
+                  |   push constant 3
+                  |   operands=[2, 3]  locals=["String[0]", Point@0x1000, 1, 2]
+[072] Interpreter | Main.main pc=16  if_icmpgt 32
+                  |   compare 2 gt 3: false -> continue
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 1, 2]
+[073] Interpreter | Main.main pc=19  iload_2
+                  |   push local[2] = 1
+                  |   operands=[1]  locals=["String[0]", Point@0x1000, 1, 2]
+[074] Interpreter | Main.main pc=20  iload_3
+                  |   push local[3] = 2
+                  |   operands=[1, 2]  locals=["String[0]", Point@0x1000, 1, 2]
+[075] Interpreter | Main.main pc=21  invokestatic Main.square:(I)I
+[076] JVM         | call #2 of Main.square: not compiled -> the interpreter runs it
+[077] Stack       | push frame for Main.square (depth 2)
+                  |   +-- thread stack (top first) ------------------------------------------+
+                  |   | Main.square  locals=[2]  operands=[]                                 |
+                  |   | Main.main  locals=["String[0]", Point@0x1000, 1, 2]  operands=[1]    |
+                  |   +----------------------------------------------------------------------+
+[078] Interpreter | Main.square pc=0   iload_0
+                  |   push local[0] = 2
+                  |   operands=[2]  locals=[2]
+[079] Interpreter | Main.square pc=1   iload_0
+                  |   push local[0] = 2
+                  |   operands=[2, 2]  locals=[2]
+[080] Interpreter | Main.square pc=2   imul
+                  |   pop 2 and 2, CPU computes 2 * 2 = 4, push it
+                  |   operands=[4]  locals=[2]
+[081] Interpreter | Main.square pc=3   ireturn
+                  |   return 4
+[082] Stack       | pop frame for Main.square, control returns to Main.main
+[083] JIT         | Main.square has been called 2 times -> it is HOT, compile it to machine code
+                  |   +-- Main.square: bytecode => x86-64 machine code -+
+                  |   | iload_0        =>  mov eax, edi                 |
+                  |   | iload_0        =>  mov r8d, edi                 |
+                  |   | imul           =>  imul eax, r8d                |
+                  |   | ireturn        =>  ret                          |
+                  |   +-------------------------------------------------+
+[084] JIT         | machine code for Main.square installed; next calls skip the interpreter
+                  |   Main.square returned 4, pushed it
+                  |   operands=[1, 4]  locals=["String[0]", Point@0x1000, 1, 2]
+[085] Interpreter | Main.main pc=24  iadd
+                  |   pop 1 and 4, CPU computes 1 + 4 = 5, push it
+                  |   operands=[5]  locals=["String[0]", Point@0x1000, 1, 2]
+[086] Interpreter | Main.main pc=25  istore_2
+                  |   pop 5 into local[2]
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 5, 2]
+[087] Interpreter | Main.main pc=26  iinc 3 1
+                  |   local[3] += 1 -> 3
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 5, 3]
+[088] Interpreter | Main.main pc=29  goto 14
+                  |   jump to pc 14
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 5, 3]
+[089] Interpreter | Main.main pc=14  iload_3
+                  |   push local[3] = 3
+                  |   operands=[3]  locals=["String[0]", Point@0x1000, 5, 3]
+[090] Interpreter | Main.main pc=15  iconst_3
+                  |   push constant 3
+                  |   operands=[3, 3]  locals=["String[0]", Point@0x1000, 5, 3]
+[091] Interpreter | Main.main pc=16  if_icmpgt 32
+                  |   compare 3 gt 3: false -> continue
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 5, 3]
+[092] Interpreter | Main.main pc=19  iload_2
+                  |   push local[2] = 5
+                  |   operands=[5]  locals=["String[0]", Point@0x1000, 5, 3]
+[093] Interpreter | Main.main pc=20  iload_3
+                  |   push local[3] = 3
+                  |   operands=[5, 3]  locals=["String[0]", Point@0x1000, 5, 3]
+[094] Interpreter | Main.main pc=21  invokestatic Main.square:(I)I
+[095] JVM         | call #3 of Main.square: compiled version exists -> run on CPU directly
+[096] Stack       | push frame for Main.square (depth 2)
+                  |   +-- thread stack (top first) ------------------------------------------+
+                  |   | Main.square [machine code, uses CPU registers]                       |
+                  |   | Main.main  locals=["String[0]", Point@0x1000, 5, 3]  operands=[5]    |
+                  |   +----------------------------------------------------------------------+
+[097] CPU         | jumps straight into machine code for Main.square (edi=3)
+                  |   mov eax, edi      ; eax = 3
+                  |   mov r8d, edi      ; r8d = 3
+                  |   imul eax, r8d     ; eax = 9
+                  |   ret               ; return value is in eax = 9
+[098] Stack       | pop frame for Main.square, control returns to Main.main
+                  |   Main.square returned 9, pushed it
+                  |   operands=[5, 9]  locals=["String[0]", Point@0x1000, 5, 3]
+[099] Interpreter | Main.main pc=24  iadd
+                  |   pop 5 and 9, CPU computes 5 + 9 = 14, push it
+                  |   operands=[14]  locals=["String[0]", Point@0x1000, 5, 3]
+[100] Interpreter | Main.main pc=25  istore_2
+                  |   pop 14 into local[2]
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 14, 3]
+[101] Interpreter | Main.main pc=26  iinc 3 1
+                  |   local[3] += 1 -> 4
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 14, 4]
+[102] Interpreter | Main.main pc=29  goto 14
+                  |   jump to pc 14
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 14, 4]
+[103] Interpreter | Main.main pc=14  iload_3
+                  |   push local[3] = 4
+                  |   operands=[4]  locals=["String[0]", Point@0x1000, 14, 4]
+[104] Interpreter | Main.main pc=15  iconst_3
+                  |   push constant 3
+                  |   operands=[4, 3]  locals=["String[0]", Point@0x1000, 14, 4]
+[105] Interpreter | Main.main pc=16  if_icmpgt 32
+                  |   compare 4 gt 3: true -> jump to 32
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 14, 4]
+[106] Interpreter | Main.main pc=32  getstatic java/lang/System.out:Ljava/io/PrintStream;
+                  |   push System.out (the standard output stream)
+                  |   operands=[System.out]  locals=["String[0]", Point@0x1000, 14, 4]
+[107] Interpreter | Main.main pc=35  iload_2
+                  |   push local[2] = 14
+                  |   operands=[System.out, 14]  locals=["String[0]", Point@0x1000, 14, 4]
+[108] Interpreter | Main.main pc=36  aload_1
+                  |   push local[1] = Point@0x1000
+                  |   operands=[System.out, 14, Point@0x1000]  locals=["String[0]", Point@0x1000, 14, 4]
+[109] Interpreter | Main.main pc=37  invokevirtual Point.sum:()I
+[110] JVM         | call #1 of Point.sum: not compiled -> the interpreter runs it
+[111] Stack       | push frame for Point.sum (depth 2)
+                  |   +-- thread stack (top first) --------------------------------------------------------+
+                  |   | Point.sum  locals=[Point@0x1000]  operands=[]                                      |
+                  |   | Main.main  locals=["String[0]", Point@0x1000, 14, 4]  operands=[System.out, 14]    |
+                  |   +------------------------------------------------------------------------------------+
+[112] Interpreter | Point.sum pc=0   aload_0
+                  |   push local[0] = Point@0x1000
+                  |   operands=[Point@0x1000]  locals=[Point@0x1000]
+[113] Interpreter | Point.sum pc=1   getfield Point.x:I
+                  |   Heap: read Point@0x1000.x -> 3
+                  |   push Point@0x1000.x = 3
+                  |   operands=[3]  locals=[Point@0x1000]
+[114] Interpreter | Point.sum pc=4   aload_0
+                  |   push local[0] = Point@0x1000
+                  |   operands=[3, Point@0x1000]  locals=[Point@0x1000]
+[115] Interpreter | Point.sum pc=5   getfield Point.y:I
+                  |   Heap: read Point@0x1000.y -> 4
+                  |   push Point@0x1000.y = 4
+                  |   operands=[3, 4]  locals=[Point@0x1000]
+[116] Interpreter | Point.sum pc=8   iadd
+                  |   pop 3 and 4, CPU computes 3 + 4 = 7, push it
+                  |   operands=[7]  locals=[Point@0x1000]
+[117] Interpreter | Point.sum pc=9   ireturn
+                  |   return 7
+[118] Stack       | pop frame for Point.sum, control returns to Main.main
+                  |   Point.sum returned 7, pushed it
+                  |   operands=[System.out, 14, 7]  locals=["String[0]", Point@0x1000, 14, 4]
+[119] Interpreter | Main.main pc=40  iadd
+                  |   pop 14 and 7, CPU computes 14 + 7 = 21, push it
+                  |   operands=[System.out, 21]  locals=["String[0]", Point@0x1000, 14, 4]
+[120] Interpreter | Main.main pc=41  invokevirtual java/io/PrintStream.println:(I)V
+[121] JVM         | System.out.println(21) needs the screen -> ask the OS
+[122] OS          | system call write(fd=1 stdout, "21\n") from PID 4242 -> sending to the Console
+[123] Console     | screen shows: 21
+                  |   printed
+                  |   operands=[]  locals=["String[0]", Point@0x1000, 14, 4]
+[124] Interpreter | Main.main pc=44  return
+                  |   return (void)
+[125] Stack       | pop frame for Main.main, control returns to the JVM launcher
+
+==============================================================================
+ STAGE 5: PROGRAM FINISHED
+==============================================================================
+[126] JVM         | main returned and no other threads are running -> shut down
+                  |   +-- final heap ---------------+
+                  |   | 0x1000: Point {x=3, y=4}    |
+                  |   +-----------------------------+
+[127] OS          | PID 4242 exited with status 0; its memory is freed and the CPU is given to other processes
+
+==============================================================================
+ OUTPUT ON THE SCREEN
+==============================================================================
+21
+
+ Summary
+   steps traced               : 127
+   bytecodes interpreted      : 73
+   machine instructions (JIT) : 4
+   methods JIT-compiled       : Main.square
+   objects on the heap        : 1
+   deepest stack              : 2 frames
+   method calls               : Main.main x1, Point.<init> x1, Main.square x3, Point.sum x1

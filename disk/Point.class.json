@@ -1,0 +1,102 @@
+{
+  "magic": "0xCAFEBABE",
+  "this_class": "Point",
+  "super_class": "java/lang/Object",
+  "fields": [
+    {
+      "name": "x",
+      "descriptor": "I",
+      "static": false
+    },
+    {
+      "name": "y",
+      "descriptor": "I",
+      "static": false
+    }
+  ],
+  "methods": [
+    {
+      "name": "<init>",
+      "descriptor": "(II)V",
+      "static": false,
+      "max_stack": 2,
+      "max_locals": 3,
+      "code": [
+        {
+          "pc": 0,
+          "op": "aload_0"
+        },
+        {
+          "pc": 1,
+          "op": "invokespecial",
+          "arg": "java/lang/Object.<init>:()V"
+        },
+        {
+          "pc": 4,
+          "op": "aload_0"
+        },
+        {
+          "pc": 5,
+          "op": "iload_1"
+        },
+        {
+          "pc": 6,
+          "op": "putfield",
+          "arg": "Point.x:I"
+        },
+        {
+          "pc": 9,
+          "op": "aload_0"
+        },
+        {
+          "pc": 10,
+          "op": "iload_2"
+        },
+        {
+          "pc": 11,
+          "op": "putfield",
+          "arg": "Point.y:I"
+        },
+        {
+          "pc": 14,
+          "op": "return"
+        }
+      ]
+    },
+    {
+      "name": "sum",
+      "descriptor": "()I",
+      "static": false,
+      "max_stack": 2,
+      "max_locals": 1,
+      "code": [
+        {
+          "pc": 0,
+          "op": "aload_0"
+        },
+        {
+          "pc": 1,
+          "op": "getfield",
+          "arg": "Point.x:I"
+        },
+        {
+          "pc": 4,
+          "op": "aload_0"
+        },
+        {
+          "pc": 5,
+          "op": "getfield",
+          "arg": "Point.y:I"
+        },
+        {
+          "pc": 8,
+          "op": "iadd"
+        },
+        {
+          "pc": 9,
+          "op": "ireturn"
+        }
+      ]
+    }
+  ]
+}

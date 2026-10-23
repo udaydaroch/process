@@ -1,0 +1,181 @@
+{
+  "magic": "0xCAFEBABE",
+  "this_class": "Main",
+  "super_class": "java/lang/Object",
+  "fields": [],
+  "methods": [
+    {
+      "name": "<init>",
+      "descriptor": "()V",
+      "static": false,
+      "max_stack": 1,
+      "max_locals": 1,
+      "code": [
+        {
+          "pc": 0,
+          "op": "aload_0"
+        },
+        {
+          "pc": 1,
+          "op": "invokespecial",
+          "arg": "java/lang/Object.<init>:()V"
+        },
+        {
+          "pc": 4,
+          "op": "return"
+        }
+      ]
+    },
+    {
+      "name": "square",
+      "descriptor": "(I)I",
+      "static": true,
+      "max_stack": 2,
+      "max_locals": 1,
+      "code": [
+        {
+          "pc": 0,
+          "op": "iload_0"
+        },
+        {
+          "pc": 1,
+          "op": "iload_0"
+        },
+        {
+          "pc": 2,
+          "op": "imul"
+        },
+        {
+          "pc": 3,
+          "op": "ireturn"
+        }
+      ]
+    },
+    {
+      "name": "main",
+      "descriptor": "([Ljava/lang/String;)V",
+      "static": true,
+      "max_stack": 4,
+      "max_locals": 4,
+      "code": [
+        {
+          "pc": 0,
+          "op": "new",
+          "arg": "Point"
+        },
+        {
+          "pc": 3,
+          "op": "dup"
+        },
+        {
+          "pc": 4,
+          "op": "iconst_3"
+        },
+        {
+          "pc": 5,
+          "op": "iconst_4"
+        },
+        {
+          "pc": 6,
+          "op": "invokespecial",
+          "arg": "Point.<init>:(II)V"
+        },
+        {
+          "pc": 9,
+          "op": "astore_1"
+        },
+        {
+          "pc": 10,
+          "op": "iconst_0"
+        },
+        {
+          "pc": 11,
+          "op": "istore_2"
+        },
+        {
+          "pc": 12,
+          "op": "iconst_1"
+        },
+        {
+          "pc": 13,
+          "op": "istore_3"
+        },
+        {
+          "pc": 14,
+          "op": "iload_3"
+        },
+        {
+          "pc": 15,
+          "op": "iconst_3"
+        },
+        {
+          "pc": 16,
+          "op": "if_icmpgt",
+          "arg": 32
+        },
+        {
+          "pc": 19,
+          "op": "iload_2"
+        },
+        {
+          "pc": 20,
+          "op": "iload_3"
+        },
+        {
+          "pc": 21,
+          "op": "invokestatic",
+          "arg": "Main.square:(I)I"
+        },
+        {
+          "pc": 24,
+          "op": "iadd"
+        },
+        {
+          "pc": 25,
+          "op": "istore_2"
+        },
+        {
+          "pc": 26,
+          "op": "iinc",
+          "arg": "3 1"
+        },
+        {
+          "pc": 29,
+          "op": "goto",
+          "arg": 14
+        },
+        {
+          "pc": 32,
+          "op": "getstatic",
+          "arg": "java/lang/System.out:Ljava/io/PrintStream;"
+        },
+        {
+          "pc": 35,
+          "op": "iload_2"
+        },
+        {
+          "pc": 36,
+          "op": "aload_1"
+        },
+        {
+          "pc": 37,
+          "op": "invokevirtual",
+          "arg": "Point.sum:()I"
+        },
+        {
+          "pc": 40,
+          "op": "iadd"
+        },
+        {
+          "pc": 41,
+          "op": "invokevirtual",
+          "arg": "java/io/PrintStream.println:(I)V"
+        },
+        {
+          "pc": 44,
+          "op": "return"
+        }
+      ]
+    }
+  ]
+}
